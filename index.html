@@ -109,6 +109,37 @@ var useMemo = React.useMemo;
 var useCallback = React.useCallback;
 var useEffect = React.useEffect;
 
+/* Sıralama hook'u — tüm tablolarda kullanılır */
+function useSortable(data, defaultKey, defaultDir) {
+  var _sk=useState(defaultKey||null); var sortKey=_sk[0]; var setSortKey=_sk[1];
+  var _sd=useState(defaultDir||"desc"); var sortDir=_sd[0]; var setSortDir=_sd[1];
+  function toggleSort(key){
+    if(sortKey===key){ setSortDir(function(d){return d==="asc"?"desc":"asc";}); }
+    else{ setSortKey(key); setSortDir("desc"); }
+  }
+  var sorted = useMemo(function(){
+    if(!sortKey) return data;
+    return (data||[]).slice().sort(function(a,b){
+      var av=a[sortKey]; var bv=b[sortKey];
+      if(av===undefined||av===null) av="";
+      if(bv===undefined||bv===null) bv="";
+      var n=Number(av); var m=Number(bv);
+      var cmp = (!isNaN(n)&&!isNaN(m)) ? n-m : String(av).localeCompare(String(bv),"tr");
+      return sortDir==="asc" ? cmp : -cmp;
+    });
+  }, [data, sortKey, sortDir]);
+  function SortTh(thProps){
+    var active = sortKey===thProps.k;
+    return <th style={{cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}} onClick={function(){toggleSort(thProps.k);}}>
+      {thProps.children}
+      <span style={{marginLeft:3,fontSize:9,opacity:active?1:0.3}}>
+        {active&&sortDir==="asc"?"▲":"▼"}
+      </span>
+    </th>;
+  }
+  return {sorted:sorted, toggleSort:toggleSort, sortKey:sortKey, sortDir:sortDir, SortTh:SortTh};
+}
+
 var USERS = [
   {id:1,name:"Admin Kullanıcı",email:"admin@sirket.com",password:"admin123",role:"admin"},
   {id:2,name:"Satıcı Ali",email:"satis@sirket.com",password:"satis123",role:"seller"},
@@ -565,6 +596,7 @@ function StockList(props) {
   var _q=useState(""); var q=_q[0]; var setQ=_q[1];
   var _c=useState("Tümü"); var cat=_c[0]; var setCat=_c[1];
   var _s=useState(null); var sel=_s[0]; var setSel=_s[1];
+  var _stockSort=useState("desc"); var stockSort=_stockSort[0]; var setStockSort=_stockSort[1];
   var ago90=new Date(new Date()-90*864e5);
 
   /* Eşleştirme map: systemProductId → esl kaydı */
@@ -614,10 +646,12 @@ function StockList(props) {
   )));
 
   var filtered=enrichedProducts.filter(function(p){
-    if(p.parasutStock===null) return false; /* Eşleştirilmemiş ürünleri gizle */
+    if(p.parasutStock===null) return false;
     var qq=q.toLowerCase();
     return(String(p.modelNo||"").toLowerCase().includes(qq)||String(p.skuId||"").toLowerCase().includes(qq)||String(p.ean||"").includes(qq)||String(p.description||"").toLowerCase().includes(qq)||String(p.displayModelNo||"").toLowerCase().includes(qq))
       &&(cat==="Tümü"||p.displayCategory===cat);
+  }).sort(function(a,b){
+    return stockSort==="desc" ? (b.parasutStock||0)-(a.parasutStock||0) : (a.parasutStock||0)-(b.parasutStock||0);
   });
 
   function upd(id,ch){ props.onUpdateProduct(id, ch); setSel(function(prev){return prev&&prev.id===id?Object.assign({},prev,ch):prev;}); }
@@ -648,7 +682,9 @@ function StockList(props) {
           <th>Model No</th>
           <th>SKU ID</th>
           <th>Kategori</th>
-          <th>Paraşüt Stok</th>
+          <th style={{cursor:"pointer",userSelect:"none"}} onClick={function(){setStockSort(function(d){return d==="desc"?"asc":"desc";});}}>
+            Paraşüt Stok <span style={{fontSize:9}}>{stockSort==="desc"?"▼":"▲"}</span>
+          </th>
           <th>Devir (3ay)</th>
           <th>Durum</th>
           <th></th>
@@ -1145,6 +1181,8 @@ function SatisRaporlari() {
   var _catFilter=useState("Tümü"); var catFilter=_catFilter[0]; var setCatFilter=_catFilter[1];
   /* Satış raporları için LOT maliyetlerini de çek */
   var _lots=useState([]); var lots=_lots[0]; var setLots=_lots[1];
+  /* Paraşüt satın alma ağırlıklı ortalama maliyetleri: modelNo → avgUnitCost */
+  var _mm=useState({}); var maliyetMap=_mm[0]; var setMaliyetMap=_mm[1];
 
   useEffect(function(){ loadAll(); }, []);
 
@@ -1154,14 +1192,20 @@ function SatisRaporlari() {
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"getParasutSatislar"})}).then(function(r){return r.json();}),
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"getParasutUrunler"})}).then(function(r){return r.json();}),
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"ParasutEslestirme"})}).then(function(r){return r.json();}),
-      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"Lots"})}).then(function(r){return r.json();})
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"Lots"})}).then(function(r){return r.json();}),
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"getParasutMaliyetler"})}).then(function(r){return r.json();})
     ]).then(function(results){
       setLoading(false);
       var satisData = results[0].ok ? (results[0].data||[]) : [];
       var eslData   = results[2].ok ? (results[2].data||[]) : [];
       var lotsData  = results[3].ok ? (results[3].data||[]) : [];
+      var maliyetData = results[4].ok ? (results[4].data||[]) : [];
       setSatislar(satisData);
       setLots(lotsData);
+      /* Maliyet map: modelNo → avgUnitCost */
+      var mm = {};
+      maliyetData.forEach(function(m){ if(m.modelNo) mm[String(m.modelNo).trim()] = Number(m.avgUnitCost)||0; });
+      setMaliyetMap(mm);
       var em = {};
       eslData.forEach(function(e){ if(e.parasutName) em[String(e.parasutName)] = e; });
       setEslestirme(em);
@@ -1172,20 +1216,17 @@ function SatisRaporlari() {
   var enriched = satislar.map(function(s){
     var pName = String(s.productName||"");
     var esl = eslestirme[pName] || {};
-    /* FIFO maliyeti: eşleşen ürünün en eski LOT'undan al */
-    var cost = Number(s.cost)||0;
-    if(!cost && esl.systemProductId){
-      var pid = String(esl.systemProductId);
-      var pLots = lots.filter(function(l){return String(l.productId)===pid;})
-        .sort(function(a,b){return new Date(a.entryDate)-new Date(b.entryDate);});
-      if(pLots.length>0) cost = Number(pLots[0].cost)||0;
-    }
+    var modelNo = esl.systemModelNo || pName || "—";
+    /* Maliyet: Paraşüt satın alma faturası ağırlıklı ortalama */
+    var avgCost = maliyetMap[modelNo] || maliyetMap[pName] || 0;
+    var unitPrice = Number(s.unitPrice)||0;
+    var profit = avgCost>0 ? (unitPrice/avgCost - 1)*100 : null;
     return Object.assign({}, s, {
-      displayName: esl.systemModelNo || pName || "—",
+      displayName: modelNo,
       category:    esl.category || s.category || "—",
-      revenue:     (Number(s.unitPrice)||0) * (Number(s.qty)||0),
-      cost:        cost,
-      profit:      cost>0 ? ((Number(s.unitPrice)||0)/cost - 1)*100 : null,
+      revenue:     unitPrice * (Number(s.qty)||0),
+      unitCost:    avgCost,
+      profit:      profit,
       year:        s.invoiceDate ? String(s.invoiceDate).slice(0,4) : "—",
       month:       s.invoiceDate ? String(s.invoiceDate).slice(0,7) : "—"
     });
@@ -1219,7 +1260,7 @@ function SatisRaporlari() {
       var k = String(s[key]||"—");
       if(!m[k]) m[k]={label:k, totalRev:0, totalCost:0, qty:0};
       m[k].totalRev  += s.revenue;
-      m[k].totalCost += (Number(s.cost)||0) * (Number(s.qty)||0);
+      m[k].totalCost += (Number(s.unitCost)||0) * (Number(s.qty)||0);
       m[k].qty       += Number(s.qty)||0;
     });
     return Object.values(m).map(function(r){
@@ -1258,16 +1299,24 @@ function SatisRaporlari() {
     });
   }
 
-  /* SVG Bar Chart bileşeni */
+  /* SVG Bar Chart bileşeni — rowsA: A yılı, rowsB: B yılı (opsiyonel) */
   function BarChart(chartProps){
-    var rows = (chartProps.rows||[]).slice(0,chartProps.topN||10);
-    if(!rows.length) return <div className="empty" style={{padding:20}}><p>Veri yok</p></div>;
-    var maxVal = Math.max.apply(null, rows.map(function(r){return Math.max(r.A||r.revenue||0, r.B||0);})) || 1;
-    var W=460, H=260, padL=80, padB=36, padT=16, barW=Math.max(8, Math.floor((W-padL-20)/(rows.length*( chartProps.compare?2:1)+1)));
-    var gap = chartProps.compare ? barW : Math.floor(barW*0.3);
+    /* rowsA ve rowsB'yi label üzerinden merge et */
+    var rowsA = (chartProps.rows||[]).slice(0,chartProps.topN||10);
+    var rowsB = chartProps.rowsB || [];
+    var mapB = {};
+    rowsB.forEach(function(r){ mapB[r.label] = r.revenue||0; });
+    var merged = rowsA.map(function(r){
+      return Object.assign({},r,{A:r.revenue||r.A||0, B:mapB[r.label]||r.B||0});
+    });
+    if(!merged.length) return <div className="empty" style={{padding:20}}><p>Veri yok</p></div>;
+    var maxVal = Math.max.apply(null, merged.map(function(r){return Math.max(r.A||0, r.B||0);})) || 1;
+    var W=500, H=280, padL=80, padB=40, padT=20;
+    var barsPerGroup = chartProps.compare ? 2 : 1;
+    var barW = Math.max(6, Math.floor((W-padL-20)/(merged.length*barsPerGroup*1.4+1)));
+    var groupW = barsPerGroup*barW + Math.max(4, Math.floor(barW*0.5));
     return (
       <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",maxWidth:W,height:"auto",display:"block"}}>
-        {/* Y ekseni */}
         {[0,0.25,0.5,0.75,1].map(function(t){
           var y = padT + (H-padT-padB)*(1-t);
           return <g key={t}>
@@ -1277,32 +1326,25 @@ function SatisRaporlari() {
             </text>
           </g>;
         })}
-        {/* Barlar */}
-        {rows.map(function(r,i){
-          var revA = r.A||r.revenue||0;
-          var revB = r.B||0;
-          var totalBars = chartProps.compare ? 2 : 1;
-          var groupW = (totalBars * barW) + gap;
+        {merged.map(function(r,i){
           var x0 = padL + 8 + i * groupW;
-          var hA = ((H-padT-padB) * revA / maxVal);
-          var hB = ((H-padT-padB) * revB / maxVal);
-          var label = r.label || r.displayName || "—";
-          var shortLabel = label.length>10 ? label.slice(0,10)+"…" : label;
+          var hA = Math.max(1,(H-padT-padB) * (r.A||0) / maxVal);
+          var hB = r.B>0 ? Math.max(1,(H-padT-padB) * r.B / maxVal) : 0;
+          var label = String(r.label||r.displayName||"—");
+          var shortLabel = label.length>12 ? label.slice(0,12)+"…" : label;
+          var midX = x0 + (chartProps.compare ? barW : barW/2);
           return <g key={i}>
-            {/* Bar A */}
-            <rect x={x0} y={H-padB-hA} width={barW} height={hA} fill="var(--bdI)" rx="2" opacity="0.85"/>
-            {/* Bar B (kıyaslama) */}
-            {chartProps.compare&&revB>0&&<rect x={x0+barW+1} y={H-padB-hB} width={barW} height={hB} fill="#f59e0b" rx="2" opacity="0.85"/>}
-            {/* X etiketi */}
-            <text x={x0+(chartProps.compare?barW:barW/2)} y={H-padB+12} textAnchor="middle" fontSize="8" fill="var(--tx3)" transform={"rotate(-30,"+(x0+(chartProps.compare?barW:barW/2))+","+(H-padB+12)+")"}>{shortLabel}</text>
+            <rect x={x0} y={H-padB-hA} width={barW} height={hA} fill="var(--bdI)" rx="2"/>
+            {chartProps.compare&&hB>0&&<rect x={x0+barW+2} y={H-padB-hB} width={barW} height={hB} fill="#f59e0b" rx="2"/>}
+            <text x={midX} y={H-padB+14} textAnchor="middle" fontSize="8" fill="var(--tx3)"
+              transform={"rotate(-35,"+midX+","+(H-padB+14)+")"}>{shortLabel}</text>
           </g>;
         })}
-        {/* Gösterge */}
         {chartProps.compare&&<g>
           <rect x={padL} y={4} width={10} height={8} fill="var(--bdI)" rx="1"/>
           <text x={padL+13} y={11} fontSize="9" fill="var(--tx2)">{yilA}</text>
-          <rect x={padL+40} y={4} width={10} height={8} fill="#f59e0b" rx="1"/>
-          <text x={padL+53} y={11} fontSize="9" fill="var(--tx2)">{yilB}</text>
+          <rect x={padL+45} y={4} width={10} height={8} fill="#f59e0b" rx="1"/>
+          <text x={padL+58} y={11} fontSize="9" fill="var(--tx2)">{yilB}</text>
         </g>}
       </svg>
     );
@@ -1351,14 +1393,23 @@ function SatisRaporlari() {
     var rowsB = groupBy(dataB, cmpProps.key);
     var mapB  = {};
     rowsB.forEach(function(r){mapB[r.label]=r.revenue;});
-    var merged = rowsA.slice(0,cmpProps.topN||10).map(function(r){
+    var allMerged = rowsA.slice(0,cmpProps.topN||10).map(function(r){
       var bRev = mapB[r.label]||0;
       var diff = bRev>0 ? ((r.revenue-bRev)/bRev*100) : null;
-      return Object.assign({},r,{bRevenue:bRev, diff:diff});
+      return Object.assign({},r,{bRevenue:bRev, diff:diff!==null?diff:null, diffSort:diff!==null?diff:-999});
     });
+    var sortable = useSortable(allMerged, "revenue", "desc");
+    var SortTh = sortable.SortTh;
+    var merged = sortable.sorted;
     return (
       <div className="tw"><table>
-        <thead><tr><th>{cmpProps.colLabel||"Grup"}</th><th>{yilA} Ciro</th><th>{yilB} Ciro</th><th>Değişim</th><th>{yilA} Adet</th></tr></thead>
+        <thead><tr>
+          <th>{cmpProps.colLabel||"Grup"}</th>
+          <SortTh k="revenue">{yilA} Ciro</SortTh>
+          <SortTh k="bRevenue">{yilB} Ciro</SortTh>
+          <SortTh k="diffSort">Değişim</SortTh>
+          <SortTh k="qty">{yilA} Adet</SortTh>
+        </tr></thead>
         <tbody>
           {merged.length===0&&<tr><td colSpan={5}><div className="empty" style={{padding:16}}><p>Veri yok</p></div></td></tr>}
           {merged.map(function(r){
@@ -1442,8 +1493,7 @@ function SatisRaporlari() {
       {tab==="urun"&&<div className="g2">
         <div className="card">
           <div className="ct">Ürün Bazlı Satış — {yilA} vs {yilB}</div>
-          <BarChart rows={groupBy(dataA,"displayName")} topN={topN} compare={true}
-            extraRows={groupBy(dataB,"displayName")}/>
+          <BarChart rows={groupBy(dataA,"displayName")} rowsB={groupBy(dataB,"displayName")} topN={topN} compare={true}/>
         </div>
         <div className="card" style={{padding:0}}>
           <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Ürün Karşılaştırma</div>
@@ -1455,7 +1505,7 @@ function SatisRaporlari() {
       {tab==="musteri"&&<div className="g2">
         <div className="card">
           <div className="ct">Müşteri Bazlı Satış — {yilA} vs {yilB}</div>
-          <BarChart rows={groupBy(dataA,"contactName")} topN={topN} compare={true}/>
+          <BarChart rows={groupBy(dataA,"contactName")} rowsB={groupBy(dataB,"contactName")} topN={topN} compare={true}/>
         </div>
         <div className="card" style={{padding:0}}>
           <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Müşteri Karşılaştırma</div>
@@ -1467,7 +1517,7 @@ function SatisRaporlari() {
       {tab==="kategori"&&<div className="g2">
         <div className="card">
           <div className="ct">Kategori Bazlı Satış — {yilA} vs {yilB}</div>
-          <BarChart rows={groupBy(dataA,"category")} topN={topN} compare={true}/>
+          <BarChart rows={groupBy(dataA,"category")} rowsB={groupBy(dataB,"category")} topN={topN} compare={true}/>
         </div>
         <div className="card" style={{padding:0}}>
           <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Kategori Karşılaştırma</div>
@@ -2271,6 +2321,10 @@ function Integrations() {
   var _serr=useState(null); var serr=_serr[0]; var setSerr=_serr[1];
   var _sresult=useState(null); var sresult=_sresult[0]; var setSresult=_sresult[1];
   var _satislar=useState([]); var satislar=_satislar[0]; var setSatislar=_satislar[1];
+  /* Satın alma sync state */
+  var _sas=useState("idle"); var sas=_sas[0]; var setSas=_sas[1];
+  var _saserr=useState(null); var saserr=_saserr[0]; var setSaserr=_saserr[1];
+  var _sasresult=useState(null); var sasresult=_sasresult[0]; var setSasresult=_sasresult[1];
   /* Filtreler */
   var _tab=useState("urunler"); var tab=_tab[0]; var setTab=_tab[1];
   var _filterDate=useState(""); var filterDate=_filterDate[0]; var setFilterDate=_filterDate[1];
@@ -2286,9 +2340,26 @@ function Integrations() {
       }).catch(function(e){ setPs("error"); setPerr("Bağlantı hatası: "+e.message); });
   }
 
+  function syncSatinAlma(reset){
+    if(reset){
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"resetParasutSatinAlmaSync"})})
+        .then(function(r){return r.json();}).then(function(){ doSyncSatinAlma(); });
+    } else { doSyncSatinAlma(); }
+  }
+  function doSyncSatinAlma(){
+    setSas("loading"); setSaserr(null);
+    fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"syncParasutSatinAlma"})})
+      .then(function(r){return r.json();}).then(function(res){
+        if(res.ok){
+          var d=res.data&&res.data.data?res.data.data:res.data;
+          setSasresult(d);
+          setSas(d&&d.done?"done":"partial");
+        } else { setSas("error"); setSaserr(res.error||"Hata"); }
+      }).catch(function(e){ setSas("error"); setSaserr("Bağlantı hatası: "+e.message); });
+  }
+
   function syncSatislar(reset){
     if(reset){
-      // Sıfırdan başla: önce reset çağır, sonra sync
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"resetParasutSatisSync"})})
         .then(function(r){return r.json();}).then(function(){ doSyncSatislar(); });
     } else {
@@ -2367,7 +2438,7 @@ function Integrations() {
   return (
     <div>
       {/* Senkronizasyon kartları */}
-      <div className="g2 mb4">
+      <div className="g3 mb4">
         <div className="card">
           <div className="ct fx g2g"><i className="ti ti-package" style={{fontSize:15}} aria-hidden="true"/>Ürün Senkronizasyonu</div>
           <div className="infobox ibI mb3" style={{fontSize:11}}><i className="ti ti-shield-check" aria-hidden="true"/> Sadece okuma — Paraşüt verileri değiştirilmez.</div>
@@ -2375,8 +2446,26 @@ function Integrations() {
             <i className={"ti ti-"+(ps==="loading"?"refresh":"cloud-download")+" "+(ps==="loading"?"spin":"")} aria-hidden="true"/>
             {ps==="loading"?"Ürünler çekiliyor...":"Paraşüt'ten Ürünleri Çek"}
           </button>
-          {ps==="done"&&presult&&<div className="infobox ibS mt2" style={{fontSize:11}}>✓ {presult.count||0} ürün işlendi — Eklenen: {presult.added||0}, Güncellenen: {presult.updated||0}, Atlanan: {presult.skipped||0}</div>}
+          {ps==="done"&&presult&&<div className="infobox ibS mt2" style={{fontSize:11}}>✓ {presult.count||0} ürün işlendi</div>}
           {ps==="error"&&<div className="infobox ibW mt2" style={{fontSize:11}}>{perr}</div>}
+        </div>
+        <div className="card">
+          <div className="ct fx g2g"><i className="ti ti-shopping-cart" style={{fontSize:15}} aria-hidden="true"/>Satın Alma Faturası Senkronizasyonu</div>
+          <div className="infobox ibI mb3" style={{fontSize:11}}><i className="ti ti-shield-check" aria-hidden="true"/> Sadece okuma. Her seferinde ~625 fatura. Tamamlanınca maliyet tablosu otomatik hesaplanır.</div>
+          <div className="fx g2g mb2" style={{flexWrap:"wrap"}}>
+            <button className="btn btnP" onClick={function(){syncSatinAlma(false);}} disabled={sas==="loading"} style={{flex:1,justifyContent:"center"}}>
+              <i className={"ti ti-"+(sas==="loading"?"refresh":"player-play")+" "+(sas==="loading"?"spin":"")} aria-hidden="true"/>
+              {sas==="loading"?"İşleniyor...":sas==="partial"?"Devam Et":"Satın Almaları Çek"}
+            </button>
+            <button className="btn bxs" onClick={function(){if(confirm("Sıfırdan başlansın mı?"))syncSatinAlma(true);}} disabled={sas==="loading"}>
+              <i className="ti ti-refresh" aria-hidden="true"/>Sıfırla
+            </button>
+          </div>
+          {sas==="partial"&&sasresult&&<div className="infobox ibW mb2" style={{fontSize:11}}>Devam et butonuna basın — toplam {sasresult.totalLines||0} kalem işlendi.</div>}
+          {(sas==="done"||sas==="partial")&&sasresult&&<div className="infobox ibS mb2" style={{fontSize:11}}>
+            Bu batch: {sasresult.batchLines||0} kalem{sas==="done"&&<strong> — Tamamlandı, maliyet tablosu güncellendi ✓</strong>}
+          </div>}
+          {sas==="error"&&<div className="infobox ibW mb2" style={{fontSize:11}}>{saserr}</div>}
         </div>
         <div className="card">
           <div className="ct fx g2g"><i className="ti ti-file-invoice" style={{fontSize:15}} aria-hidden="true"/>Satış Faturası Senkronizasyonu</div>
