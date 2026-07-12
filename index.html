@@ -2149,18 +2149,26 @@ function SatinAlmaGecmisi(props) {
     }).catch(function(){ setLoading(false); });
   }
 
-  /* Eşleştirme map: parasutName → {systemModelNo, category} */
+  /* Eşleştirme map: parasutName (normalize) → {systemModelNo, category} */
   var nameToSku = {};
   eslestirme.forEach(function(e){
-    if(e.parasutName && e.systemModelNo) nameToSku[String(e.parasutName)] = e;
+    if(e.parasutName && e.systemModelNo) {
+      /* Hem orijinal hem normalize haliyle ekle */
+      nameToSku[String(e.parasutName)] = e;
+      nameToSku[String(e.parasutName).trim().toUpperCase()] = e;
+    }
   });
 
-  /* Paraşüt satın alma faturalarını SKU bazında zenginleştir */
+  /* Paraşüt satın alma faturalarını systemModelNo bazında zenginleştir */
   var enriched = satinAlma.map(function(row){
     var pName = String(row.productName||"");
-    var esl = nameToSku[pName] || {};
-    var sku = esl.systemModelNo || pName || "—";
+    /* Önce tam eşleşme, sonra normalize eşleşme dene */
+    var esl = nameToSku[pName] || nameToSku[pName.trim().toUpperCase()] || {};
+    var systemModelNo = esl.systemModelNo || "";
+    /* Eşleştirme yoksa orijinal açıklamayı göster ama farklı işaretle */
+    var sku = systemModelNo || pName || "—";
     var category = esl.category || "—";
+    var matched = !!systemModelNo;
     var date = String(row.invoiceDate||"").slice(0,10);
     var qty = Number(row.qty)||0;
     var unitPrice = Number(row.unitPrice)||0;
@@ -2171,19 +2179,21 @@ function SatinAlmaGecmisi(props) {
       qty: qty,
       unitPrice: unitPrice,
       totalCost: qty * unitPrice,
-      parasutName: pName  /* orijinal fatura açıklaması */
+      parasutName: pName,
+      matched: matched
     });
   });
 
-  /* SKU bazında özet */
+  /* systemModelNo bazında özet */
   var bySku = {};
   enriched.forEach(function(row){
     var k = row.sku;
-    if(!bySku[k]) bySku[k]={sku:k, category:row.category, totalQty:0, totalCost:0, invoiceCount:0, lastDate:"", avgUnit:0, rows:[]};
+    if(!bySku[k]) bySku[k]={sku:k, category:row.category, totalQty:0, totalCost:0, invoiceCount:0, lastDate:"", avgUnit:0, matched:row.matched, rows:[]};
     bySku[k].totalQty   += row.qty;
     bySku[k].totalCost  += row.totalCost;
     bySku[k].invoiceCount++;
     bySku[k].rows.push(row);
+    if(row.matched) bySku[k].matched = true; /* en az biri eşleştiyse matched */
     if(!bySku[k].lastDate || row.date > bySku[k].lastDate) bySku[k].lastDate = row.date;
   });
   Object.values(bySku).forEach(function(s){
@@ -2242,11 +2252,11 @@ function SatinAlmaGecmisi(props) {
         {/* Sol: SKU bazlı özet */}
         <div className="card" style={{padding:0}}>
           <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>
-            SKU Bazlı Satın Alma Özeti ({skuSortable.sorted.length})
+            System Model No Bazlı Satın Alma Özeti ({skuSortable.sorted.length})
           </div>
           <div className="tw"><table>
             <thead><tr>
-              <SortThSku k="sku">SKU ID</SortThSku>
+              <SortThSku k="sku">System Model No</SortThSku>
               <th>Kategori</th>
               <SortThSku k="totalQty">Toplam Adet</SortThSku>
               <SortThSku k="totalCost">Toplam Maliyet</SortThSku>
@@ -2259,7 +2269,10 @@ function SatinAlmaGecmisi(props) {
               {skuSortable.sorted.map(function(r){return(
                 <tr key={r.sku} style={{cursor:"pointer",background:selSku===r.sku?"var(--bgI)":"inherit"}}
                   onClick={function(){setSelSku(r.sku===selSku?null:r.sku);}}>
-                  <td style={{fontWeight:500}}>{r.sku}</td>
+                  <td style={{fontWeight:500}}>
+                    {r.sku}
+                    {!r.matched&&<span style={{marginLeft:4,fontSize:9,color:"var(--txW)",background:"var(--bgW)",padding:"1px 4px",borderRadius:3}}>eşleşmemiş</span>}
+                  </td>
                   <td><span className="badge bi" style={{fontSize:10}}>{r.category}</span></td>
                   <td>{r.totalQty}</td>
                   <td><strong>{fmtTL(r.totalCost)}</strong></td>
