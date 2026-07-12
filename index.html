@@ -2126,133 +2126,190 @@ function EslestirmeEkrani() {
 
 /* ── SATIN ALMA GEÇMİŞİ ── */
 function SatinAlmaGecmisi(props) {
+  var _loading=useState(true); var loading=_loading[0]; var setLoading=_loading[1];
+  var _satinAlma=useState([]); var satinAlma=_satinAlma[0]; var setSatinAlma=_satinAlma[1];
+  var _eslestirme=useState([]); var eslestirme=_eslestirme[0]; var setEslestirme=_eslestirme[1];
   var _search=useState(""); var search=_search[0]; var setSearch=_search[1];
   var _catFilter=useState("Tümü"); var catFilter=_catFilter[0]; var setCatFilter=_catFilter[1];
   var _dateFrom=useState(""); var dateFrom=_dateFrom[0]; var setDateFrom=_dateFrom[1];
   var _dateTo=useState(""); var dateTo=_dateTo[0]; var setDateTo=_dateTo[1];
-  var _selModel=useState(null); var selModel=_selModel[0]; var setSelModel=_selModel[1];
+  var _selSku=useState(null); var selSku=_selSku[0]; var setSelSku=_selSku[1];
 
-  /* Eşleştirme map: systemProductId → esl */
-  var eslById = {};
-  (props.eslestirme||[]).forEach(function(e){
-    if(e.systemProductId && String(e.systemProductId).indexOf("M:")!==0)
-      eslById[String(e.systemProductId)] = e;
+  useEffect(function(){ loadData(); }, []);
+
+  function loadData(){
+    setLoading(true);
+    Promise.all([
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"ParasutSatinAlma"})}).then(function(r){return r.json();}),
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"ParasutEslestirme"})}).then(function(r){return r.json();})
+    ]).then(function(results){
+      setLoading(false);
+      if(results[0].ok) setSatinAlma(results[0].data||[]);
+      if(results[1].ok) setEslestirme(results[1].data||[]);
+    }).catch(function(){ setLoading(false); });
+  }
+
+  /* Eşleştirme map: parasutName → {systemModelNo, category} */
+  var nameToSku = {};
+  eslestirme.forEach(function(e){
+    if(e.parasutName && e.systemModelNo) nameToSku[String(e.parasutName)] = e;
   });
 
-  /* LOT'ları zenginleştir: ürün ve model no bilgisini ekle */
-  var enrichedLots = (props.lots||[]).map(function(l){
-    var p = (props.products||[]).find(function(x){return String(x.id)===String(l.productId);});
-    var esl = p ? eslById[String(p.id)] : null;
-    var modelNo = esl ? (esl.systemModelNo||p.modelNo) : (p ? p.modelNo : "—");
-    var category = esl ? (esl.category||p.category||"—") : (p ? p.category||"—" : "—");
-    var entryDate = normDate(l.entryDate||"");
-    return Object.assign({}, l, {
-      modelNo: modelNo,
+  /* Paraşüt satın alma faturalarını SKU bazında zenginleştir */
+  var enriched = satinAlma.map(function(row){
+    var pName = String(row.productName||"");
+    var esl = nameToSku[pName] || {};
+    var sku = esl.systemModelNo || pName || "—";
+    var category = esl.category || "—";
+    var date = String(row.invoiceDate||"").slice(0,10);
+    var qty = Number(row.qty)||0;
+    var unitPrice = Number(row.unitPrice)||0;
+    return Object.assign({},row,{
+      sku: sku,
       category: category,
-      entryDate: entryDate,
-      totalCost: (Number(l.qty)||0) * (Number(l.cost)||0)
+      date: date,
+      qty: qty,
+      unitPrice: unitPrice,
+      totalCost: qty * unitPrice,
+      parasutName: pName  /* orijinal fatura açıklaması */
     });
   });
 
-  /* Kategoriler */
-  var cats = ["Tümü"].concat(Array.from(new Set(enrichedLots.map(function(l){return l.category;}).filter(function(c){return c&&c!=="—";}))).sort());
-
-  /* Model no bazında özet */
-  var byModel = {};
-  enrichedLots.forEach(function(l){
-    var k = l.modelNo||"—";
-    if(!byModel[k]) byModel[k]={modelNo:k,category:l.category,totalQty:0,totalCost:0,lotCount:0,lastEntry:"",lots:[]};
-    byModel[k].totalQty  += Number(l.qty)||0;
-    byModel[k].totalCost += l.totalCost;
-    byModel[k].lotCount++;
-    byModel[k].lots.push(l);
-    if(!byModel[k].lastEntry || l.entryDate > byModel[k].lastEntry) byModel[k].lastEntry = l.entryDate;
+  /* SKU bazında özet */
+  var bySku = {};
+  enriched.forEach(function(row){
+    var k = row.sku;
+    if(!bySku[k]) bySku[k]={sku:k, category:row.category, totalQty:0, totalCost:0, invoiceCount:0, lastDate:"", avgUnit:0, rows:[]};
+    bySku[k].totalQty   += row.qty;
+    bySku[k].totalCost  += row.totalCost;
+    bySku[k].invoiceCount++;
+    bySku[k].rows.push(row);
+    if(!bySku[k].lastDate || row.date > bySku[k].lastDate) bySku[k].lastDate = row.date;
+  });
+  Object.values(bySku).forEach(function(s){
+    s.avgUnit = s.totalQty>0 ? s.totalCost/s.totalQty : 0;
   });
 
-  var modelRows = Object.values(byModel).filter(function(r){
-    var qq = search.toLowerCase();
-    var matchQ = !qq || r.modelNo.toLowerCase().includes(qq) || r.category.toLowerCase().includes(qq);
-    var matchC = catFilter==="Tümü" || r.category===catFilter;
-    return matchQ && matchC;
-  }).sort(function(a,b){return b.totalCost-a.totalCost;});
+  /* Kategoriler */
+  var cats = ["Tümü"].concat(Array.from(new Set(Object.values(bySku).map(function(s){return s.category;}).filter(function(c){return c&&c!=="—";}))).sort());
 
-  /* Seçili modelin LOT detayları */
-  var selLots = selModel
-    ? enrichedLots.filter(function(l){return l.modelNo===selModel;})
-        .filter(function(l){
-          if(dateFrom && l.entryDate < dateFrom) return false;
-          if(dateTo   && l.entryDate > dateTo)   return false;
-          return true;
-        }).sort(function(a,b){return a.entryDate > b.entryDate ? -1 : 1;})
+  /* Filtrelenmiş SKU listesi */
+  var skuSortable = useSortable(
+    Object.values(bySku).filter(function(r){
+      var qq = search.toLowerCase();
+      var matchQ = !qq || r.sku.toLowerCase().includes(qq) || r.category.toLowerCase().includes(qq);
+      var matchC = catFilter==="Tümü" || r.category===catFilter;
+      return matchQ && matchC;
+    }),
+    "totalCost", "desc"
+  );
+  var SortThSku = skuSortable.SortTh;
+
+  /* Seçili SKU'nun detay satırları */
+  var selRows = selSku
+    ? (bySku[selSku]||{rows:[]}).rows.filter(function(r){
+        if(dateFrom && r.date < dateFrom) return false;
+        if(dateTo   && r.date > dateTo)   return false;
+        return true;
+      }).sort(function(a,b){return a.date>b.date?-1:1;})
     : [];
+
+  var detailSortable = useSortable(selRows, "date", "desc");
+  var SortThD = detailSortable.SortTh;
+
+  if(loading) return <div className="empty" style={{padding:40}}><i className="ti ti-refresh spin"/><p>Yükleniyor...</p></div>;
+
+  if(!satinAlma.length) return (
+    <div className="infobox ibW">
+      Satın alma verisi bulunamadı. <strong>Entegrasyonlar → "Satın Almaları Çek"</strong> butonuyla önce veri çekin.
+    </div>
+  );
 
   return (
     <div>
       <div className="fxb mb3" style={{gap:8,flexWrap:"wrap"}}>
         <div className="swrap" style={{flex:1,maxWidth:320}}>
           <i className="ti ti-search si" aria-hidden="true"/>
-          <input placeholder="Model no veya kategori ara..." value={search} onChange={function(e){setSearch(e.target.value);}}/>
+          <input placeholder="SKU ID veya kategori ara..." value={search} onChange={function(e){setSearch(e.target.value);}}/>
         </div>
         <select value={catFilter} onChange={function(e){setCatFilter(e.target.value);}} style={{width:"auto",minWidth:130}}>
           {cats.map(function(c){return <option key={c}>{c}</option>;})}
         </select>
+        <button className="btn bxs" onClick={loadData}><i className="ti ti-refresh" aria-hidden="true"/>Yenile</button>
       </div>
 
       <div className="g2">
-        {/* Sol: Model özet listesi */}
+        {/* Sol: SKU bazlı özet */}
         <div className="card" style={{padding:0}}>
           <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>
-            Model No Bazlı Satın Alma Özeti ({modelRows.length})
+            SKU Bazlı Satın Alma Özeti ({skuSortable.sorted.length})
           </div>
           <div className="tw"><table>
-            <thead><tr><th>Model No</th><th>Kategori</th><th>Toplam Adet</th><th>Toplam Maliyet</th><th>Lot Sayısı</th><th>Son Giriş</th></tr></thead>
+            <thead><tr>
+              <SortThSku k="sku">SKU ID</SortThSku>
+              <th>Kategori</th>
+              <SortThSku k="totalQty">Toplam Adet</SortThSku>
+              <SortThSku k="totalCost">Toplam Maliyet</SortThSku>
+              <SortThSku k="avgUnit">Ort. Birim</SortThSku>
+              <SortThSku k="invoiceCount">Fatura</SortThSku>
+              <SortThSku k="lastDate">Son Tarih</SortThSku>
+            </tr></thead>
             <tbody>
-              {modelRows.length===0&&<tr><td colSpan={6}><div className="empty" style={{padding:20}}><p>Kayıt bulunamadı</p></div></td></tr>}
-              {modelRows.map(function(r){return(
-                <tr key={r.modelNo} style={{cursor:"pointer",background:selModel===r.modelNo?"var(--bgI)":"inherit"}}
-                  onClick={function(){setSelModel(r.modelNo===selModel?null:r.modelNo);}}>
-                  <td style={{fontWeight:500}}>{r.modelNo}</td>
+              {skuSortable.sorted.length===0&&<tr><td colSpan={7}><div className="empty" style={{padding:20}}><p>Kayıt bulunamadı</p></div></td></tr>}
+              {skuSortable.sorted.map(function(r){return(
+                <tr key={r.sku} style={{cursor:"pointer",background:selSku===r.sku?"var(--bgI)":"inherit"}}
+                  onClick={function(){setSelSku(r.sku===selSku?null:r.sku);}}>
+                  <td style={{fontWeight:500}}>{r.sku}</td>
                   <td><span className="badge bi" style={{fontSize:10}}>{r.category}</span></td>
                   <td>{r.totalQty}</td>
-                  <td>{fmtTL(r.totalCost)}</td>
-                  <td>{r.lotCount}</td>
-                  <td style={{fontSize:12}}>{r.lastEntry||"—"}</td>
+                  <td><strong>{fmtTL(r.totalCost)}</strong></td>
+                  <td>{fmtTL(r.avgUnit)}</td>
+                  <td>{r.invoiceCount}</td>
+                  <td style={{fontSize:12}}>{r.lastDate||"—"}</td>
                 </tr>
               );})}
             </tbody>
           </table></div>
         </div>
 
-        {/* Sağ: Seçili modelin LOT detayı */}
+        {/* Sağ: Seçili SKU'nun fatura detayları */}
         <div className="card">
-          {!selModel&&<div className="empty"><i className="ti ti-shopping-cart"/><p>Sol listeden bir model seçin</p></div>}
-          {selModel&&<>
-            <div className="ct fxb">
-              <span><strong>{selModel}</strong> — LOT Geçmişi</span>
+          {!selSku&&<div className="empty"><i className="ti ti-shopping-cart"/><p>Sol listeden bir SKU seçin</p></div>}
+          {selSku&&<>
+            <div className="ct fxb" style={{marginBottom:8}}>
+              <span><strong>{selSku}</strong> — Fatura Geçmişi</span>
               <div className="fx g2g">
-                <input type="date" value={dateFrom} onChange={function(e){setDateFrom(e.target.value);}} style={{fontSize:11,width:120}} title="Başlangıç tarihi"/>
-                <input type="date" value={dateTo} onChange={function(e){setDateTo(e.target.value);}} style={{fontSize:11,width:120}} title="Bitiş tarihi"/>
-                {(dateFrom||dateTo)&&<button className="btn bxs" onClick={function(){setDateFrom("");setDateTo("");}} title="Temizle"><i className="ti ti-x" aria-hidden="true"/></button>}
+                <input type="date" value={dateFrom} onChange={function(e){setDateFrom(e.target.value);}} style={{fontSize:11,width:120}} title="Başlangıç"/>
+                <input type="date" value={dateTo} onChange={function(e){setDateTo(e.target.value);}} style={{fontSize:11,width:120}} title="Bitiş"/>
+                {(dateFrom||dateTo)&&<button className="btn bxs" onClick={function(){setDateFrom("");setDateTo("");}}><i className="ti ti-x" aria-hidden="true"/></button>}
               </div>
             </div>
-            {byModel[selModel]&&<div className="g3 mb3">
-              <div className="sc"><div className="lbl">Toplam Alınan</div><div className="val" style={{fontSize:16}}>{byModel[selModel].totalQty} ad</div></div>
-              <div className="sc"><div className="lbl">Toplam Maliyet</div><div className="val" style={{fontSize:16}}>{fmtTL(byModel[selModel].totalCost)}</div></div>
-              <div className="sc"><div className="lbl">Ort. Birim Maliyet</div><div className="val" style={{fontSize:16}}>{byModel[selModel].totalQty>0?fmtTL(byModel[selModel].totalCost/byModel[selModel].totalQty):"—"}</div></div>
+            {bySku[selSku]&&<div className="g3 mb3">
+              <div className="sc"><div className="lbl">Toplam Alınan</div><div className="val">{bySku[selSku].totalQty} ad</div></div>
+              <div className="sc"><div className="lbl">Toplam Tutar</div><div className="val">{fmtTL(bySku[selSku].totalCost)}</div></div>
+              <div className="sc"><div className="lbl">Ağ. Ort. Birim</div><div className="val">{fmtTL(bySku[selSku].avgUnit)}</div></div>
             </div>}
             <div className="tw"><table>
-              <thead><tr><th>LOT No</th><th>Giriş Tarihi</th><th>SKT</th><th>Alınan</th><th>Kalan</th><th>Birim Maliyet</th><th>Toplam</th></tr></thead>
+              <thead><tr>
+                <SortThD k="date">Tarih</SortThD>
+                <th>Fatura No</th>
+                <th>Tedarikçi</th>
+                <th>Fatura Açıklaması</th>
+                <SortThD k="qty">Adet</SortThD>
+                <SortThD k="unitPrice">Birim Fiyat</SortThD>
+                <SortThD k="totalCost">Toplam</SortThD>
+              </tr></thead>
               <tbody>
-                {selLots.length===0&&<tr><td colSpan={7}><div className="empty" style={{padding:16}}><p>Bu tarih aralığında kayıt yok</p></div></td></tr>}
-                {selLots.map(function(l){return(
-                  <tr key={l.id}>
-                    <td><span className="badge bi" style={{fontSize:10}}>{l.lotNo}</span></td>
-                    <td style={{fontSize:12}}>{l.entryDate}</td>
-                    <td style={{fontSize:12,color:l.expiryDate&&daysUntil(l.expiryDate)<90?"var(--txW)":"inherit"}}>{normDate(l.expiryDate)||"—"}</td>
-                    <td>{l.qty}</td>
-                    <td><strong>{l.remaining}</strong></td>
-                    <td>{fmtTL(l.cost)}</td>
-                    <td>{fmtTL(l.totalCost)}</td>
+                {detailSortable.sorted.length===0&&<tr><td colSpan={7}><div className="empty" style={{padding:12}}><p>Bu tarih aralığında kayıt yok</p></div></td></tr>}
+                {detailSortable.sorted.map(function(r,i){return(
+                  <tr key={i}>
+                    <td style={{fontSize:12,whiteSpace:"nowrap"}}>{r.date}</td>
+                    <td style={{fontSize:11}}>{r.invoiceNo||"—"}</td>
+                    <td style={{fontSize:12}}>{String(r.contactName||"—")}</td>
+                    <td style={{fontSize:11,color:"var(--tx2)",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.parasutName}>{r.parasutName||"—"}</td>
+                    <td>{r.qty}</td>
+                    <td>{fmtTL(r.unitPrice)}</td>
+                    <td><strong>{fmtTL(r.totalCost)}</strong></td>
                   </tr>
                 );})}
               </tbody>
@@ -2394,11 +2451,13 @@ function Integrations() {
 
   useEffect(function(){ loadUrunler(); loadSatislar(); }, []);
 
-  /* Filtreli satışlar */
+  /* Filtreli satışlar — eşleştirme üzerinden SKU adı */
+  var _eslMap2={}; /* Entegrasyonlar için basit isim→SKU map — loadSatislar'da doldurulur */
   var filteredSatislar = satislar.filter(function(s){
     var dateOk = !filterDate || (s.invoiceDate && s.invoiceDate.slice(0,7)===filterDate);
     var custOk = !filterCust || (s.contactName && s.contactName.toLowerCase().includes(filterCust.toLowerCase()));
-    var prodOk = !filterProd || (String(s.productName||"").toLowerCase().includes(filterProd.toLowerCase())) || (String(s.productCode||"").toLowerCase().includes(filterProd.toLowerCase()));
+    var pName = String(s.productName||"");
+    var prodOk = !filterProd || pName.toLowerCase().includes(filterProd.toLowerCase()) || (String(s.productCode||"").toLowerCase().includes(filterProd.toLowerCase()));
     return dateOk && custOk && prodOk;
   });
 
@@ -2425,11 +2484,12 @@ function Integrations() {
   });
   var custRows = Object.values(byCustomer).sort(function(a,b){return b.total-a.total;});
 
-  /* Ürün bazında gruplama */
+  /* Ürün bazında gruplama — SKU ID üzerinden */
   var byProduct = {};
   filteredSatislar.forEach(function(s){
-    var key = (String(s.productCode||"—"))+"||"+(String(s.productName||"—"));
-    if(!byProduct[key]) byProduct[key]={code:String(s.productCode||"—"),name:String(s.productName||"—"),qty:0,total:0};
+    var pName = String(s.productName||"—");
+    var key = pName; /* SKU bazında birleştirme Satış Raporları'nda yapılıyor, burada ham gösterim */
+    if(!byProduct[key]) byProduct[key]={code:String(s.productCode||"—"),name:pName,qty:0,total:0};
     byProduct[key].qty += Number(s.qty)||0;
     byProduct[key].total += (Number(s.unitPrice)||0)*(Number(s.qty)||0);
   });
@@ -2925,7 +2985,7 @@ function App() {
             {page==="customers"&&<Customers customers={customers} setCustomers={setCustomers} products={products} lots={lots} sales={sales} checks={checks} setChecks={setChecks} role={user.role} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onAddCheck={addCheck} onUpdateCheck={updateCheck}/>}
             {page==="payments"&&<PaymentTracking sales={sales} customers={customers} checks={checks}/>}
             {page==="raporlar"&&<SatisRaporlari/>}
-            {page==="satin_alma"&&<SatinAlmaGecmisi lots={lots} products={products} eslestirme={eslestirme}/>}
+            {page==="satin_alma"&&<SatinAlmaGecmisi/>}
             {page==="sellers"&&<SellerPerformance users={allUsers} sales={sales}/>}
             {page==="sku"&&<SkuMap products={products} skuMap={skuMap} setSkuMap={setSkuMap} role={user.role} onAdd={addSkuMapping} onDelete={deleteSkuMapping}/>}
             {page==="eslestirme"&&<EslestirmeEkrani/>}
