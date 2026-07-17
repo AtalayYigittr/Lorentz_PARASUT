@@ -1113,30 +1113,123 @@ function SellerPerformance(props) {
 /* ── ÖDEME / VADE TAKİBİ ── */
 function PaymentTracking(props) {
   var sales=props.sales, customers=props.customers, checks=props.checks;
-  var openSales=sales.filter(function(s){return s.paymentStatus==="open";});
-  var overdueSales=openSales.filter(function(s){var c=customers.find(function(x){return x.id===s.customerId;});return isOverdue(s,c);});
+  var parasutSatislar=props.parasutSatislar||[];
+  var today=new Date(); today.setHours(0,0,0,0);
+
+  /* Sistem Sales tablosundan açık hesaplar (eski yöntem) */
+  var openSales=sales.filter(function(s){return s.paymentStatus==="open"||s.paymentStatus==="unpaid";});
+  var overdueSales=openSales.filter(function(s){
+    var c=customers.find(function(x){return String(x.id)===String(s.customerId);});
+    return isOverdue(s,c);
+  });
+
+  /* Paraşüt'ten gelen ödenmemiş faturalar — remaining > 0 */
+  var parasutUnpaid = parasutSatislar.filter(function(s){
+    return s.paymentStatus==="unpaid" || Number(s.remaining)>0;
+  });
+
+  /* Müşteri adına göre grupla */
+  var byContact = {};
+  parasutUnpaid.forEach(function(s){
+    var name = String(s.contactName||"—");
+    if(!byContact[name]) byContact[name]={name:name, totalRemaining:0, invoices:[], hasOverdue:false};
+    byContact[name].totalRemaining += Number(s.remaining)||0;
+    /* Due date kontrolü */
+    var due = s.dueDate ? new Date(s.dueDate) : null;
+    var isOvd = due && due < today;
+    if(isOvd) byContact[name].hasOverdue = true;
+    /* Aynı fatura birden fazla kalem içerebilir — tekrar ekleme */
+    if(!byContact[name].invoices.find(function(i){return i.invoiceNo===s.invoiceNo;})){
+      byContact[name].invoices.push({
+        invoiceNo: s.invoiceNo,
+        invoiceDate: s.invoiceDate,
+        dueDate: s.dueDate,
+        remaining: Number(s.remaining)||0,
+        isOverdue: isOvd
+      });
+    }
+  });
+  var contactRows = Object.values(byContact).sort(function(a,b){return b.totalRemaining-a.totalRemaining;});
+  var overdueContacts = contactRows.filter(function(r){return r.hasOverdue;});
+  var totalUnpaid = contactRows.reduce(function(a,r){return a+r.totalRemaining;},0);
+  var totalOverdue = overdueContacts.reduce(function(a,r){return a+r.totalRemaining;},0);
+
   var overdueChecks=checks.filter(function(c){return c.status==="pending"&&daysUntil(c.dueDate)<0;});
   var dueSoonChecks=checks.filter(function(c){return c.status==="pending"&&daysUntil(c.dueDate)>=0&&daysUntil(c.dueDate)<=7;});
+
+  var _tab=useState("parasut"); var tab=_tab[0]; var setTab=_tab[1];
 
   return (
     <div>
       <div className="g3 mb4">
-        <div className="sc"><div className="lbl">Açık Hesap Toplamı</div><div className="val" style={{fontSize:18}}>{fmtTL(openSales.reduce(function(a,s){return a+s.qty*s.price;},0))}</div></div>
-        <div className="sc"><div className="lbl">Vadesi Geçmiş</div><div className="val" style={{fontSize:18,color:"var(--txD)"}}>{fmtTL(overdueSales.reduce(function(a,s){return a+s.qty*s.price;},0))}</div></div>
+        <div className="sc"><div className="lbl">Paraşüt Açık Fatura</div><div className="val" style={{fontSize:18}}>{fmtTL(totalUnpaid)}</div></div>
+        <div className="sc"><div className="lbl">Vadesi Geçmiş</div><div className="val" style={{fontSize:18,color:"var(--txD)"}}>{fmtTL(totalOverdue)}</div></div>
         <div className="sc"><div className="lbl">Bekleyen Çek</div><div className="val" style={{fontSize:18}}>{fmtTL(checks.filter(function(c){return c.status==="pending";}).reduce(function(a,c){return a+c.amount;},0))}</div></div>
       </div>
 
-      {overdueChecks.length>0&&<div className="infobox ibW mb3"><i className="ti ti-alert-triangle" aria-hidden="true"/> <strong>{overdueChecks.length}</strong> adet çekin vadesi geçti ve ödemesi yapılmadı!</div>}
+      {overdueContacts.length>0&&<div className="infobox ibW mb3"><i className="ti ti-alert-triangle" aria-hidden="true"/> <strong>{overdueContacts.length}</strong> müşterinin vadesi geçmiş açık faturası var!</div>}
+      {overdueChecks.length>0&&<div className="infobox ibW mb3"><i className="ti ti-alert-triangle" aria-hidden="true"/> <strong>{overdueChecks.length}</strong> adet çekin vadesi geçti!</div>}
       {dueSoonChecks.length>0&&<div className="infobox ibI mb3"><i className="ti ti-clock" aria-hidden="true"/> <strong>{dueSoonChecks.length}</strong> adet çekin vadesi 7 gün içinde doluyor.</div>}
 
-      <div className="card mb4">
-        <div className="ct">Vadesi Geçmiş Açık Hesaplar</div>
+      <div className="tabs mb3">
+        {[["parasut","Paraşüt Açık Faturalar"],["sistem","Sistem Kayıtları"],["cek","Çek Takibi"]].map(function(x){return(
+          <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>
+        );})}
+      </div>
+
+      {/* Paraşüt açık faturalar */}
+      {tab==="parasut"&&<div>
+        <div className="card" style={{padding:0}}>
+          <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>
+            Müşteri Bazlı Açık Faturalar ({contactRows.length} müşteri)
+          </div>
+          <div className="tw"><table>
+            <thead><tr><th>Müşteri</th><th>Açık Tutar</th><th>Fatura Sayısı</th><th>Durum</th></tr></thead>
+            <tbody>
+              {contactRows.length===0&&<tr><td colSpan={4}><div className="empty" style={{padding:16}}><p>Açık fatura yok — tüm ödemeler tamamlanmış</p></div></td></tr>}
+              {contactRows.map(function(r){return(
+                <tr key={r.name} style={{background:r.hasOverdue?"rgba(239,68,68,0.05)":"inherit"}}>
+                  <td style={{fontWeight:500}}>{r.name}</td>
+                  <td><strong style={{color:r.hasOverdue?"var(--txD)":"inherit"}}>{fmtTL(r.totalRemaining)}</strong></td>
+                  <td>{r.invoices.length}</td>
+                  <td>{r.hasOverdue?<span className="badge bd_">Vadesi Geçmiş</span>:<span className="badge bw">Bekliyor</span>}</td>
+                </tr>
+              );})}
+            </tbody>
+          </table></div>
+        </div>
+        {contactRows.length>0&&<div className="card mt3" style={{padding:0}}>
+          <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Fatura Detayları</div>
+          <div className="tw"><table>
+            <thead><tr><th>Müşteri</th><th>Fatura No</th><th>Fatura Tarihi</th><th>Vade Tarihi</th><th>Kalan Tutar</th><th>Durum</th></tr></thead>
+            <tbody>
+              {contactRows.flatMap(function(r){return r.invoices.map(function(inv){return(
+                <tr key={r.name+inv.invoiceNo} style={{background:inv.isOverdue?"rgba(239,68,68,0.05)":"inherit"}}>
+                  <td style={{fontWeight:500}}>{r.name}</td>
+                  <td style={{fontSize:12}}>{inv.invoiceNo||"—"}</td>
+                  <td style={{fontSize:12}}>{String(inv.invoiceDate||"").slice(0,10)}</td>
+                  <td style={{fontSize:12,color:inv.isOverdue?"var(--txD)":"inherit",fontWeight:inv.isOverdue?600:400}}>
+                    {inv.dueDate?String(inv.dueDate).slice(0,10):"—"}
+                    {inv.isOverdue&&<span style={{marginLeft:4,fontSize:10}}>({Math.abs(Math.round((new Date(inv.dueDate)-today)/864e5))} gün geçti)</span>}
+                  </td>
+                  <td><strong style={{color:inv.isOverdue?"var(--txD)":"inherit"}}>{fmtTL(inv.remaining)}</strong></td>
+                  <td>{inv.isOverdue?<span className="badge bd_">Gecikmiş</span>:<span className="badge bw">Bekliyor</span>}</td>
+                </tr>
+              );});})}
+            </tbody>
+          </table></div>
+        </div>}
+      </div>}
+
+      {/* Sistem kayıtları */}
+      {tab==="sistem"&&<div className="card">
+        <div className="ct">Sistem Kaynaklı Açık Hesaplar</div>
         <div className="tw"><table>
           <thead><tr><th>Müşteri</th><th>Tarih</th><th>Tutar</th><th>Vade Sonu</th><th>Gecikme</th></tr></thead>
           <tbody>
             {overdueSales.length===0&&<tr><td colSpan={5}><div className="empty" style={{padding:16}}><p>Vadesi geçmiş kayıt yok</p></div></td></tr>}
             {overdueSales.map(function(s){
-              var c=customers.find(function(x){return x.id===s.customerId;});
+              var c=customers.find(function(x){return String(x.id)===String(s.customerId);});
               return(<tr key={s.id}>
                 <td style={{fontWeight:500}}>{c?c.name:"—"}</td>
                 <td style={{fontSize:12}}>{s.date}</td>
@@ -1147,16 +1240,17 @@ function PaymentTracking(props) {
             })}
           </tbody>
         </table></div>
-      </div>
+      </div>}
 
-      <div className="card">
+      {/* Çek takibi */}
+      {tab==="cek"&&<div className="card">
         <div className="ct">Çek Takibi</div>
         <div className="tw"><table>
           <thead><tr><th>Müşteri</th><th>Tutar</th><th>Vade</th><th>Durum</th></tr></thead>
           <tbody>
             {checks.length===0&&<tr><td colSpan={4}><div className="empty" style={{padding:16}}><p>Çek kaydı yok</p></div></td></tr>}
             {checks.map(function(ch){
-              var c=customers.find(function(x){return x.id===ch.customerId;});
+              var c=customers.find(function(x){return String(x.id)===String(ch.customerId);});
               var d=daysUntil(ch.dueDate);
               var overdue=ch.status==="pending"&&d<0;
               return(<tr key={ch.id}>
@@ -1168,7 +1262,210 @@ function PaymentTracking(props) {
             })}
           </tbody>
         </table></div>
+      </div>}
+    </div>
+  );
+}
+
+/* ── MÜŞTERİ BAZLI RAPOR BİLEŞENİ ── */
+function MusteriBazliRapor(p) {
+  var dataA=p.dataA||[], dataB=p.dataB||[];
+  var yilA=p.yilA||"A", yilB=p.yilB||"B", topN=p.topN||10;
+  var profitGroupBy=p.profitGroupBy||function(){return[];};
+  var groupBy=p.groupBy||function(){return[];};
+
+  var _search=useState(""); var search=_search[0]; var setSearch=_search[1];
+  var _viewMode=useState("tablo"); var viewMode=_viewMode[0]; var setViewMode=_viewMode[1];
+
+  /* Tüm müşteri listesi */
+  var grpA = groupBy(dataA,"contactName");
+  var grpB = groupBy(dataB,"contactName");
+  var pgA  = profitGroupBy(dataA,"contactName");
+  var pgB  = profitGroupBy(dataB,"contactName");
+
+  var mapAR={}, mapBR={}, pgMapA={}, pgMapB={};
+  grpA.forEach(function(r){mapAR[r.label]=r;});
+  grpB.forEach(function(r){mapBR[r.label]=r;});
+  pgA.forEach(function(r){pgMapA[r.label]=r;});
+  pgB.forEach(function(r){pgMapB[r.label]=r;});
+
+  var allLabels = Array.from(new Set(Object.keys(mapAR).concat(Object.keys(mapBR))));
+  var merged = allLabels.map(function(label){
+    var a=mapAR[label]||{revenue:0,qty:0};
+    var b=mapBR[label]||{revenue:0,qty:0};
+    var pa=pgMapA[label]||{profit:null};
+    var pb=pgMapB[label]||{profit:null};
+    var revDiff=b.revenue>0?((a.revenue-b.revenue)/b.revenue*100):null;
+    var profDiff=pa.profit!==null&&pb.profit!==null?pa.profit-pb.profit:null;
+    return {label:label, aRev:a.revenue||0, aQty:a.qty||0, aProfit:pa.profit,
+            bRev:b.revenue||0, bQty:b.qty||0, bProfit:pb.profit,
+            revDiff:revDiff, profDiff:profDiff};
+  }).sort(function(a,b){return b.aRev-a.aRev;});
+
+  /* Arama filtresi */
+  var filtered = search.trim()
+    ? merged.filter(function(r){return r.label.toLowerCase().includes(search.toLowerCase());})
+    : merged.slice(0,topN);
+
+  function diffBadge(v){
+    if(v===null) return <span style={{color:"var(--tx3)"}}>—</span>;
+    var cls=v>0?"var(--txS)":v<0?"var(--txD)":"var(--tx2)";
+    return <span style={{color:cls,fontWeight:500}}>{v>0?"+":""}{v.toFixed(1)}%</span>;
+  }
+  function profitBadge(v){
+    if(v===null) return <span style={{color:"var(--tx3)"}}>—</span>;
+    var cls=v>=25?"bs":v>=10?"bw":"bd_";
+    return <span className={"badge "+cls}>%{v.toFixed(1)}</span>;
+  }
+
+  /* Karlılık bar chart verisi */
+  var profRows = filtered.filter(function(r){return r.aProfit!==null;})
+    .map(function(r){return {label:r.label, A:r.aProfit||0, B:r.bProfit||0};})
+    .slice(0,Math.min(filtered.length,15));
+  var maxProf = Math.max.apply(null, profRows.map(function(r){return Math.max(r.A||0,r.B||0);}),1)||1;
+
+  return (
+    <div>
+      {/* Araç çubuğu */}
+      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap"}}>
+        <div className="swrap" style={{flex:1,maxWidth:300}}>
+          <i className="ti ti-search si" aria-hidden="true"/>
+          <input placeholder="Müşteri adı filtrele..." value={search} onChange={function(e){setSearch(e.target.value);}}/>
+        </div>
+        <div className="fx g2g">
+          {["tablo","grafik","karlilik"].map(function(m){return(
+            <button key={m} className={"btn bxs"+(viewMode===m?" btnP":"")} onClick={function(){setViewMode(m);}}>
+              {m==="tablo"?"📋 Tablo":m==="grafik"?"📊 Ciro Grafik":"💰 Karlılık"}
+            </button>
+          );})}
+        </div>
       </div>
+      {search&&<div style={{fontSize:12,color:"var(--tx2)",marginBottom:8}}>{filtered.length} müşteri bulundu</div>}
+
+      {/* TABLO */}
+      {viewMode==="tablo"&&<div className="card" style={{padding:0}}>
+        <div className="tw" style={{overflowX:"auto"}}><table style={{minWidth:650}}>
+          <thead>
+            <tr style={{background:"var(--bg2)"}}>
+              <th rowSpan={2}>Müşteri</th>
+              <th colSpan={3} style={{textAlign:"center",color:"var(--bdI)"}}>{yilA}</th>
+              <th colSpan={3} style={{textAlign:"center",color:"#f59e0b"}}>{yilB}</th>
+              <th colSpan={2} style={{textAlign:"center"}}>Değişim</th>
+            </tr>
+            <tr style={{background:"var(--bg2)"}}>
+              <th style={{color:"var(--bdI)"}}>Adet</th>
+              <th style={{color:"var(--bdI)"}}>Ciro</th>
+              <th style={{color:"var(--bdI)"}}>Kâr%</th>
+              <th style={{color:"#f59e0b"}}>Adet</th>
+              <th style={{color:"#f59e0b"}}>Ciro</th>
+              <th style={{color:"#f59e0b"}}>Kâr%</th>
+              <th>Ciro</th>
+              <th>Kâr%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length===0&&<tr><td colSpan={9}><div className="empty" style={{padding:16}}><p>Sonuç yok</p></div></td></tr>}
+            {filtered.map(function(r){
+              return(<tr key={r.label}>
+                <td style={{fontWeight:500,fontSize:12}}>{r.label}</td>
+                <td style={{color:"var(--bdI)"}}>{r.aQty}</td>
+                <td style={{color:"var(--bdI)",fontWeight:500}}>{fmtTL(r.aRev)}</td>
+                <td>{profitBadge(r.aProfit)}</td>
+                <td style={{color:"#f59e0b"}}>{r.bQty||"—"}</td>
+                <td style={{color:"#f59e0b"}}>{r.bRev>0?fmtTL(r.bRev):"—"}</td>
+                <td>{profitBadge(r.bProfit)}</td>
+                <td>{diffBadge(r.revDiff)}</td>
+                <td>{r.profDiff!==null?<span style={{color:r.profDiff>0?"var(--txS)":r.profDiff<0?"var(--txD)":"inherit",fontWeight:500}}>{r.profDiff>0?"+":""}{r.profDiff.toFixed(1)} puan</span>:<span style={{color:"var(--tx3)"}}>—</span>}</td>
+              </tr>);
+            })}
+          </tbody>
+        </table></div>
+      </div>}
+
+      {/* CİRO GRAFİĞİ */}
+      {viewMode==="grafik"&&<div className="card">
+        <div className="ct">Müşteri Ciro Karşılaştırması — {yilA} vs {yilB}</div>
+        {(function(){
+          var rows2=filtered.slice(0,15);
+          var maxV=Math.max.apply(null,rows2.map(function(r){return Math.max(r.aRev,r.bRev);}),1)||1;
+          var W=520,H=260,pL=70,pB=40,pT=16;
+          var bW=Math.max(6,Math.floor((W-pL-16)/(rows2.length*2.5+1)));
+          var gW=bW*2+4;
+          return <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto"}}>
+            {[0,0.5,1].map(function(t){var y=pT+(H-pT-pB)*(1-t);return <g key={t}>
+              <line x1={pL} x2={W-8} y1={y} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
+              <text x={pL-3} y={y+3} textAnchor="end" fontSize="9" fill="var(--tx3)">{Math.round(maxV*t/1000)+"K"}</text>
+            </g>;})}
+            {rows2.map(function(r,i){
+              var x0=pL+6+i*gW;
+              var hA=Math.max(1,(H-pT-pB)*r.aRev/maxV), hB=r.bRev>0?Math.max(1,(H-pT-pB)*r.bRev/maxV):0;
+              var lbl=r.label.length>10?r.label.slice(0,10)+"…":r.label;
+              return <g key={i}>
+                <rect x={x0} y={H-pB-hA} width={bW} height={hA} fill="var(--bdI)" rx="2"/>
+                {hB>0&&<rect x={x0+bW+1} y={H-pB-hB} width={bW} height={hB} fill="#f59e0b" rx="2"/>}
+                <text x={x0+bW} y={H-pB+14} textAnchor="middle" fontSize="7" fill="var(--tx3)" transform={"rotate(-35,"+(x0+bW)+","+(H-pB+14)+")"}>{lbl}</text>
+              </g>;
+            })}
+            <g><rect x={pL} y={4} width={8} height={6} fill="var(--bdI)" rx="1"/>
+            <text x={pL+11} y={9} fontSize="8" fill="var(--tx2)">{yilA}</text>
+            <rect x={pL+35} y={4} width={8} height={6} fill="#f59e0b" rx="1"/>
+            <text x={pL+46} y={9} fontSize="8" fill="var(--tx2)">{yilB}</text></g>
+          </svg>;
+        })()}
+      </div>}
+
+      {/* KARLILIK GRAFİĞİ */}
+      {viewMode==="karlilik"&&<div>
+        <div className="card mb3">
+          <div className="ct">Müşteri Karlılık Karşılaştırması — {yilA} vs {yilB}</div>
+          {profRows.length===0?<div className="empty" style={{padding:20}}><p>Karlılık verisi yok (satın alma maliyeti gerekli)</p></div>:(function(){
+            var W=520,H=260,pL=60,pB=40,pT=16;
+            var bW=Math.max(8,Math.floor((W-pL-16)/(profRows.length*2.5+1)));
+            var gW=bW*2+4;
+            return <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto"}}>
+              {[0,0.5,1].map(function(t){var y=pT+(H-pT-pB)*(1-t);return <g key={t}>
+                <line x1={pL} x2={W-8} y1={y} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
+                <text x={pL-3} y={y+3} textAnchor="end" fontSize="9" fill="var(--tx3)">%{Math.round(maxProf*t)}</text>
+              </g>;})}
+              {profRows.map(function(r,i){
+                var x0=pL+6+i*gW;
+                var hA=Math.max(1,(H-pT-pB)*Math.max(0,r.A)/maxProf);
+                var hB=r.B>0?Math.max(1,(H-pT-pB)*Math.max(0,r.B)/maxProf):0;
+                var clr=r.A>=25?"var(--txS)":r.A>=10?"var(--txW)":"var(--txD)";
+                var lbl=r.label.length>10?r.label.slice(0,10)+"…":r.label;
+                return <g key={i}>
+                  <rect x={x0} y={H-pB-hA} width={bW} height={hA} fill={clr} rx="2"/>
+                  {hB>0&&<rect x={x0+bW+1} y={H-pB-hB} width={bW} height={hB} fill={clr} rx="2" opacity="0.4"/>}
+                  <text x={x0+bW} y={H-pB+14} textAnchor="middle" fontSize="7" fill="var(--tx3)" transform={"rotate(-35,"+(x0+bW)+","+(H-pB+14)+")"}>{lbl}</text>
+                </g>;
+              })}
+              <g><rect x={pL} y={4} width={8} height={6} fill="var(--tx2)" rx="1"/>
+              <text x={pL+11} y={9} fontSize="8" fill="var(--tx2)">{yilA}</text>
+              <rect x={pL+35} y={4} width={8} height={6} fill="var(--tx2)" rx="1" opacity="0.4"/>
+              <text x={pL+46} y={9} fontSize="8" fill="var(--tx2)">{yilB}</text></g>
+            </svg>;
+          })()}
+        </div>
+        {/* Karlılık değişim tablosu */}
+        <div className="card" style={{padding:0}}>
+          <div className="tw"><table>
+            <thead><tr><th>Müşteri</th><th>{yilA} Karlılık</th><th>{yilB} Karlılık</th><th>Değişim (puan)</th><th>{yilA} Ciro</th></tr></thead>
+            <tbody>
+              {filtered.filter(function(r){return r.aProfit!==null;}).map(function(r){
+                var clsA=r.aProfit>=25?"bs":r.aProfit>=10?"bw":"bd_";
+                var clsB=r.bProfit!==null?(r.bProfit>=25?"bs":r.bProfit>=10?"bw":"bd_"):"";
+                return(<tr key={r.label}>
+                  <td style={{fontWeight:500,fontSize:12}}>{r.label}</td>
+                  <td><span className={"badge "+clsA}>%{r.aProfit.toFixed(1)}</span></td>
+                  <td>{r.bProfit!==null?<span className={"badge "+clsB}>%{r.bProfit.toFixed(1)}</span>:<span style={{color:"var(--tx3)"}}>—</span>}</td>
+                  <td>{r.profDiff!==null?<span style={{color:r.profDiff>0?"var(--txS)":r.profDiff<0?"var(--txD)":"inherit",fontWeight:600}}>{r.profDiff>0?"+":""}{r.profDiff.toFixed(1)} puan</span>:<span style={{color:"var(--tx3)"}}>—</span>}</td>
+                  <td>{fmtTL(r.aRev)}</td>
+                </tr>);
+              })}
+            </tbody>
+          </table></div>
+        </div>
+      </div>}
     </div>
   );
 }
@@ -1840,16 +2137,10 @@ function SatisRaporlari() {
       />}
 
       {/* MÜŞTERİ BAZLI */}
-      {tab==="musteri"&&<div className="g2">
-        <div className="card">
-          <div className="ct">Müşteri Bazlı Satış — {yilA} vs {yilB}</div>
-          <BarChart rows={groupBy(dataA,"contactName")} rowsB={groupBy(dataB,"contactName")} topN={topN} compare={true}/>
-        </div>
-        <div className="card" style={{padding:0}}>
-          <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Müşteri Karşılaştırma</div>
-          <CmpTable key_="contactName" colLabel="Müşteri" topN={topN}/>
-        </div>
-      </div>}
+      {tab==="musteri"&&<MusteriBazliRapor
+        dataA={dataA} dataB={dataB} yilA={yilA} yilB={yilB}
+        topN={topN} profitGroupBy={profitGroupBy} groupBy={groupBy}
+      />}
 
       {/* KATEGORİ BAZLI */}
       {tab==="kategori"&&<div className="g2">
@@ -3365,7 +3656,7 @@ function App() {
             {page==="dashboard"&&<Dashboard products={products} lots={lots} sales={sales} customers={customers}/>}
             {page==="stock"&&<StockList products={products} setProducts={setProducts} lots={lots} sales={sales} role={user.role} onAddProduct={function(){setShowAP(true);}} onAddLot={function(){setShowAL(true);}} onUpdateProduct={updateProduct} eslestirme={eslestirme} parasutSatislar={parasutSatislar} parasutUrunler={parasutUrunler}/>}
             {page==="customers"&&<Customers customers={customers} setCustomers={setCustomers} products={products} lots={lots} sales={sales} checks={checks} setChecks={setChecks} role={user.role} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onAddCheck={addCheck} onUpdateCheck={updateCheck}/>}
-            {page==="payments"&&<PaymentTracking sales={sales} customers={customers} checks={checks}/>}
+            {page==="payments"&&<PaymentTracking sales={sales} customers={customers} checks={checks} parasutSatislar={parasutSatislar}/>}
             {page==="raporlar"&&<SatisRaporlari/>}
             {page==="satin_alma"&&<SatinAlmaGecmisi/>}
             {page==="sellers"&&<SellerPerformance users={allUsers} sales={sales}/>}
