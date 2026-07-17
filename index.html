@@ -813,25 +813,31 @@ function Customers(props) {
       <div className="g2">
         <div className="card" style={{padding:0}}>
           <div style={{padding:"12px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Müşteri Listesi</div>
-          <div className="tw"><table><thead><tr><th>Müşteri</th><th>Vade</th><th>Karlılık</th><th>Açık Hesap</th><th>Risk</th><th></th></tr></thead>
+          <div className="tw"><table><thead><tr><th>Müşteri</th><th>Ciro</th><th>Vade</th><th>Karlılık</th><th>Açık Hesap</th><th>Risk</th><th></th></tr></thead>
           <tbody>
-            {props.customers.length===0&&<tr><td colSpan={6}><div className="empty" style={{padding:20}}><p>Müşteri yok</p></div></td></tr>}
+            {props.customers.length===0&&<tr><td colSpan={7}><div className="empty" style={{padding:20}}><p>Müşteri yok</p></div></td></tr>}
             {props.customers.map(function(c){
-              var custSales=props.sales.filter(function(s){return s.customerId===c.id;});
+              /* String ve number tip uyumsuzluğunu önlemek için String() dönüşümü */
+              var custSales=props.sales.filter(function(s){return String(s.customerId)===String(c.id);});
+              /* Paraşüt satışlarında customerId boş olabilir — müşteri adıyla da dene */
               var cp = custSales.length>0 ? weightedProfit(custSales) : null;
               var ppCls = cp===null?"":cp>=25?"bs":cp>=10?"bw":"bd_";
+              var totalRev = custSales.reduce(function(a,s){return a+(Number(s.price)||0)*(Number(s.qty)||0);},0);
               var openBal = openBalance(c.id, props.sales);
               var overdueBal = overdueBalance(c.id, props.sales, c);
               var limit = c.riskLimit || 1000000;
               var riskPct = limit>0 ? (openBal/limit*100) : 0;
               var riskCls = riskPct>=100?"bd_":riskPct>=70?"bw":"bs";
+              return Object.assign({},c,{cp:cp,ppCls:ppCls,totalRev:totalRev,openBal:openBal,overdueBal:overdueBal,riskPct:riskPct,riskCls:riskCls,custSales:custSales});
+            }).sort(function(a,b){return b.totalRev-a.totalRev;}).map(function(c){
               return(
               <tr key={c.id} style={{cursor:"pointer",background:sel&&sel.id===c.id?"var(--bgI)":"inherit"}} onClick={function(){setSel(c);setTab("quote");}}>
-                <td style={{fontWeight:500}}>{c.name}{overdueBal>0&&<i className="ti ti-alert-triangle" style={{color:"var(--txD)",marginLeft:6,fontSize:13}} title="Vadesi geçmiş borç var" aria-hidden="true"/>}</td>
+                <td style={{fontWeight:500}}>{c.name}{c.overdueBal>0&&<i className="ti ti-alert-triangle" style={{color:"var(--txD)",marginLeft:6,fontSize:13}} title="Vadesi geçmiş borç var" aria-hidden="true"/>}</td>
+                <td style={{fontWeight:500}}>{c.totalRev>0?fmtTL(c.totalRev):<span className="tc txs">—</span>}</td>
                 <td>{c.maturity}ay</td>
-                <td>{cp===null?<span className="tc txs">—</span>:<span className={"badge "+ppCls}>%{cp.toFixed(1)}</span>}</td>
-                <td style={{fontSize:12}}>{fmtTL(openBal)}{overdueBal>0&&<div style={{fontSize:10,color:"var(--txD)"}}>{fmtTL(overdueBal)} gecikmiş</div>}</td>
-                <td><span className={"badge "+riskCls}>%{riskPct.toFixed(0)}</span></td>
+                <td>{c.cp===null?<span className="tc txs">—</span>:<span className={"badge "+c.ppCls}>%{c.cp.toFixed(1)}</span>}</td>
+                <td style={{fontSize:12}}>{fmtTL(c.openBal)}{c.overdueBal>0&&<div style={{fontSize:10,color:"var(--txD)"}}>{fmtTL(c.overdueBal)} gecikmiş</div>}</td>
+                <td><span className={"badge "+c.riskCls}>%{c.riskPct.toFixed(0)}</span></td>
                 <td><div className="fx g1">{props.role==="admin"&&<button className="btn bxs" onClick={function(e){e.stopPropagation();openEdit(c);}}><i className="ti ti-edit" aria-hidden="true"/></button>}<button className="btn bxs btnP" onClick={function(e){e.stopPropagation();setSel(c);setTab("quote");}}><i className="ti ti-file-invoice" aria-hidden="true"/></button></div></td>
               </tr>
             );})}
@@ -1167,6 +1173,334 @@ function PaymentTracking(props) {
   );
 }
 
+/* ── ÜRÜN BAZLI RAPOR BİLEŞENİ ── */
+function UrunBazliRapor(p) {
+  var dataA=p.dataA||[], dataB=p.dataB||[];
+  var yilA=p.yilA||"A", yilB=p.yilB||"B", topN=p.topN||10;
+  var enrichedFiltered=p.enrichedFiltered||[];
+
+  /* Güvenli fonksiyon referansları */
+  var profitGroupBy = p.profitGroupBy || function(arr,key){
+    var m={};
+    arr.forEach(function(s){
+      var k=String(s[key]||"—");
+      if(!m[k]) m[k]={label:k,totalRev:0,totalCost:0,qty:0};
+      m[k].totalRev+=s.revenue||0;
+      m[k].totalCost+=(s.unitCost||0)*(Number(s.qty)||0);
+      m[k].qty+=Number(s.qty)||0;
+    });
+    return Object.values(m).map(function(r){
+      return Object.assign({},r,{profit:r.totalCost>0?(r.totalRev/r.totalCost-1)*100:null});
+    }).sort(function(a,b){return b.totalRev-a.totalRev;});
+  };
+  var groupBy = p.groupBy || function(arr,key){
+    var m={};
+    arr.forEach(function(s){
+      var k=String(s[key]||"—");
+      if(!m[k]) m[k]={label:k,revenue:0,qty:0,count:0};
+      m[k].revenue+=s.revenue||0;
+      m[k].qty+=Number(s.qty)||0;
+      m[k].count++;
+    });
+    return Object.values(m).sort(function(a,b){return b.revenue-a.revenue;});
+  };
+
+  var _selModels=useState([]); var selModels=_selModels[0]; var setSelModels=_selModels[1];
+  var _modelSearch=useState(""); var modelSearch=_modelSearch[0]; var setModelSearch=_modelSearch[1];
+  var _viewMode=useState("tablo"); var viewMode=_viewMode[0]; var setViewMode=_viewMode[1];
+
+  /* Tüm unique model listesi */
+  var allModels = Array.from(new Set(
+    dataA.concat(dataB).map(function(s){return s.displayName||"—";})
+  )).filter(function(m){return m&&m!=="—";}).sort();
+
+  /* Model bazında A ve B yılı veri */
+  var pgA = profitGroupBy(dataA,"displayName");
+  var pgB = profitGroupBy(dataB,"displayName");
+  var grpA = groupBy(dataA,"displayName");
+  var grpB = groupBy(dataB,"displayName");
+
+  /* Map'ler */
+  var mapA={}, mapB={}, pgMapA={}, pgMapB={};
+  grpA.forEach(function(r){mapA[r.label]=r;});
+  grpB.forEach(function(r){mapB[r.label]=r;});
+  pgA.forEach(function(r){pgMapA[r.label]=r;});
+  pgB.forEach(function(r){pgMapB[r.label]=r;});
+
+  /* Birleştirilmiş satır listesi */
+  var allLabels = Array.from(new Set(Object.keys(mapA).concat(Object.keys(mapB))));
+  var merged = allLabels.map(function(label){
+    var a=mapA[label]||{revenue:0,qty:0};
+    var b=mapB[label]||{revenue:0,qty:0};
+    var pa=pgMapA[label]||{profit:null};
+    var pb=pgMapB[label]||{profit:null};
+    var revDiff = b.revenue>0?((a.revenue-b.revenue)/b.revenue*100):null;
+    var qtyDiff = b.qty>0?((a.qty-b.qty)/b.qty*100):null;
+    return {label:label, aRev:a.revenue||0, aQty:a.qty||0, aProfit:pa.profit,
+            bRev:b.revenue||0, bQty:b.qty||0, bProfit:pb.profit,
+            revDiff:revDiff, qtyDiff:qtyDiff};
+  }).sort(function(a,b){return b.aRev-a.aRev;});
+
+  /* Seçili modeller için aylık trend */
+  var monthlyByModel = {};
+  selModels.forEach(function(model){
+    var months={};
+    enrichedFiltered.forEach(function(s){
+      if(s.displayName!==model) return;
+      var m=s.month||"—";
+      if(!months[m]) months[m]={month:m,aRev:0,aQty:0,bRev:0,bQty:0};
+      if(s.year===yilA){months[m].aRev+=s.revenue;months[m].aQty+=Number(s.qty)||0;}
+      if(s.year===yilB){months[m].bRev+=s.revenue;months[m].bQty+=Number(s.qty)||0;}
+    });
+    monthlyByModel[model]=Object.values(months).sort(function(a,b){return a.month>b.month?1:-1;});
+  });
+
+  /* Seçili model toggle */
+  function toggleModel(label){
+    setSelModels(function(prev){
+      if(prev.indexOf(label)>=0) return prev.filter(function(m){return m!==label;});
+      return prev.concat([label]).slice(-5); /* max 5 model */
+    });
+  }
+
+  /* Görünen satırlar */
+  var visibleMerged = merged.slice(0,topN);
+
+  function diffBadge(v){
+    if(v===null) return <span style={{color:"var(--tx3)"}}>—</span>;
+    var cls=v>0?"var(--txS)":v<0?"var(--txD)":"var(--tx2)";
+    return <span style={{color:cls,fontWeight:500}}>{v>0?"+":""}{v.toFixed(1)}%</span>;
+  }
+  function profitBadge(v){
+    if(v===null) return <span style={{color:"var(--tx3)"}}>—</span>;
+    var cls=v>=25?"bs":v>=10?"bw":"bd_";
+    return <span className={"badge "+cls}>%{v.toFixed(1)}</span>;
+  }
+
+  /* Seçili modellerin renkleri */
+  var modelColors=["#3b82f6","#f59e0b","#10b981","#ef4444","#8b5cf6"];
+
+  return (
+    <div>
+      {/* Görünüm modu */}
+      <div className="fxb mb3">
+        <div className="fx g2g">
+          {["tablo","grafik"].map(function(m){return(
+            <button key={m} className={"btn bxs"+(viewMode===m?" btnP":"")} onClick={function(){setViewMode(m);}}>
+              <i className={"ti ti-"+(m==="tablo"?"table":"chart-bar")} aria-hidden="true"/>
+              {m==="tablo"?"Detaylı Tablo":"Grafik"}
+            </button>
+          );})}
+        </div>
+        {selModels.length>0&&<div className="fx g2g" style={{flexWrap:"wrap"}}>
+          <span style={{fontSize:12,color:"var(--tx2)"}}>Seçili:</span>
+          {selModels.map(function(m,i){return(
+            <span key={m} style={{fontSize:11,background:modelColors[i],color:"#fff",padding:"2px 8px",borderRadius:12,cursor:"pointer"}} onClick={function(){toggleModel(m);}}>
+              {m} ✕
+            </span>
+          );})}
+        </div>}
+      </div>
+
+      {/* TABLO GÖRÜNÜMÜ */}
+      {viewMode==="tablo"&&<div>
+        <div className="card" style={{padding:0}}>
+          <div className="tw" style={{overflowX:"auto"}}><table style={{minWidth:700}}>
+            <thead>
+              <tr style={{background:"var(--bg2)"}}>
+                <th rowSpan={2} style={{minWidth:140}}>Model No</th>
+                <th colSpan={3} style={{textAlign:"center",borderBottom:".5px solid var(--bd)",color:"var(--bdI)"}}>{yilA}</th>
+                <th colSpan={3} style={{textAlign:"center",borderBottom:".5px solid var(--bd)",color:"#f59e0b"}}>{yilB}</th>
+                <th colSpan={2} style={{textAlign:"center"}}>Değişim</th>
+                <th rowSpan={2} style={{width:32}}></th>
+              </tr>
+              <tr style={{background:"var(--bg2)"}}>
+                <th style={{color:"var(--bdI)"}}>Adet</th>
+                <th style={{color:"var(--bdI)"}}>Ciro</th>
+                <th style={{color:"var(--bdI)"}}>Kâr%</th>
+                <th style={{color:"#f59e0b"}}>Adet</th>
+                <th style={{color:"#f59e0b"}}>Ciro</th>
+                <th style={{color:"#f59e0b"}}>Kâr%</th>
+                <th>Ciro</th>
+                <th>Adet</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleMerged.length===0&&<tr><td colSpan={10}><div className="empty" style={{padding:20}}><p>Veri yok</p></div></td></tr>}
+              {visibleMerged.map(function(r){
+                var isSel=selModels.indexOf(r.label)>=0;
+                var selIdx=selModels.indexOf(r.label);
+                return(
+                  <tr key={r.label} style={{background:isSel?"var(--bgI)":"inherit",cursor:"pointer"}} onClick={function(){toggleModel(r.label);}}>
+                    <td>
+                      <div className="fx g1" style={{alignItems:"center"}}>
+                        {isSel&&<span style={{width:8,height:8,borderRadius:"50%",background:modelColors[selIdx],display:"inline-block",flexShrink:0}}/>}
+                        <span style={{fontWeight:500,fontSize:12}}>{r.label}</span>
+                      </div>
+                    </td>
+                    <td style={{color:"var(--bdI)"}}>{r.aQty}</td>
+                    <td style={{color:"var(--bdI)",fontWeight:500}}>{fmtTL(r.aRev)}</td>
+                    <td>{profitBadge(r.aProfit)}</td>
+                    <td style={{color:"#f59e0b"}}>{r.bQty||"—"}</td>
+                    <td style={{color:"#f59e0b"}}>{r.bRev>0?fmtTL(r.bRev):"—"}</td>
+                    <td>{profitBadge(r.bProfit)}</td>
+                    <td>{diffBadge(r.revDiff)}</td>
+                    <td>{diffBadge(r.qtyDiff)}</td>
+                    <td>
+                      <button className={"btn bxs"+(isSel?" btnP":"")} style={{padding:"2px 6px",fontSize:10}} onClick={function(e){e.stopPropagation();toggleModel(r.label);}}>
+                        {isSel?"✓":"+"} Seç
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table></div>
+          <div style={{padding:"8px 16px",fontSize:11,color:"var(--tx3)"}}>
+            Satıra tıklayarak veya "+ Seç" ile model seçin (max 5), seçili modellerin aylık trendi aşağıda görünür.
+          </div>
+        </div>
+      </div>}
+
+      {/* GRAFİK GÖRÜNÜMÜ */}
+      {viewMode==="grafik"&&<div className="g2">
+        <div className="card">
+          <div className="ct">Ciro Karşılaştırması — {yilA} vs {yilB}</div>
+          {(function(){
+            var rowsA=grpA.slice(0,topN), rowsB=grpB.slice(0,topN);
+            var mapB2={}; rowsB.forEach(function(r){mapB2[r.label]=r.revenue||0;});
+            var rows2=rowsA.map(function(r){return {label:r.label,A:r.revenue||0,B:mapB2[r.label]||0};});
+            var maxV=Math.max.apply(null,rows2.map(function(r){return Math.max(r.A,r.B);}),1)||1;
+            var W=480,H=240,pL=70,pB=36,pT=16;
+            var bW=Math.max(6,Math.floor((W-pL-16)/(rows2.length*2.5+1)));
+            var gW=bW*2+4;
+            return <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto"}}>
+              {[0,0.5,1].map(function(t){var y=pT+(H-pT-pB)*(1-t);return <g key={t}>
+                <line x1={pL} x2={W-8} y1={y} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
+                <text x={pL-3} y={y+3} textAnchor="end" fontSize="9" fill="var(--tx3)">{Math.round(maxV*t/1000)+"K"}</text>
+              </g>;})}
+              {rows2.map(function(r,i){
+                var x0=pL+6+i*gW;
+                var hA=Math.max(1,(H-pT-pB)*r.A/maxV), hB=r.B>0?Math.max(1,(H-pT-pB)*r.B/maxV):0;
+                var lbl=r.label.length>10?r.label.slice(0,10)+"…":r.label;
+                return <g key={i}>
+                  <rect x={x0} y={H-pB-hA} width={bW} height={hA} fill="var(--bdI)" rx="2"/>
+                  {hB>0&&<rect x={x0+bW+1} y={H-pB-hB} width={bW} height={hB} fill="#f59e0b" rx="2"/>}
+                  <text x={x0+bW} y={H-pB+12} textAnchor="middle" fontSize="7" fill="var(--tx3)" transform={"rotate(-30,"+(x0+bW)+","+(H-pB+12)+")"}>{lbl}</text>
+                </g>;
+              })}
+              <g><rect x={pL} y={4} width={8} height={6} fill="var(--bdI)" rx="1"/>
+              <text x={pL+11} y={9} fontSize="8" fill="var(--tx2)">{yilA}</text>
+              <rect x={pL+35} y={4} width={8} height={6} fill="#f59e0b" rx="1"/>
+              <text x={pL+46} y={9} fontSize="8" fill="var(--tx2)">{yilB}</text></g>
+            </svg>;
+          })()}
+        </div>
+        <div className="card">
+          <div className="ct">Karlılık (%) — {yilA}</div>
+          {(function(){
+            var rows2=pgA.slice(0,topN).map(function(r){return {label:r.label,val:r.profit||0};});
+            var maxV=Math.max.apply(null,rows2.map(function(r){return r.val;}),1)||1;
+            var W=480,H=240,pL=60,pB=36,pT=16;
+            var bW=Math.max(10,Math.floor((W-pL-16)/(rows2.length*1.5+1)));
+            return <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto"}}>
+              {[0,0.5,1].map(function(t){var y=pT+(H-pT-pB)*(1-t);return <g key={t}>
+                <line x1={pL} x2={W-8} y1={y} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
+                <text x={pL-3} y={y+3} textAnchor="end" fontSize="9" fill="var(--tx3)">%{Math.round(maxV*t)}</text>
+              </g>;})}
+              {rows2.map(function(r,i){
+                var x0=pL+6+i*(bW+6);
+                var h=Math.max(1,(H-pT-pB)*Math.max(0,r.val)/maxV);
+                var clr=r.val>=25?"var(--txS)":r.val>=10?"var(--txW)":"var(--txD)";
+                var lbl=r.label.length>10?r.label.slice(0,10)+"…":r.label;
+                return <g key={i}>
+                  <rect x={x0} y={H-pB-h} width={bW} height={h} fill={clr} rx="2"/>
+                  <text x={x0+bW/2} y={H-pB+12} textAnchor="middle" fontSize="7" fill="var(--tx3)" transform={"rotate(-30,"+(x0+bW/2)+","+(H-pB+12)+")"}>{lbl}</text>
+                </g>;
+              })}
+            </svg>;
+          })()}
+        </div>
+      </div>}
+
+      {/* SEÇİLİ MODELLERİN AYLIK TRENDİ */}
+      {selModels.length>0&&<div style={{marginTop:16}}>
+        <div className="card">
+          <div className="ct">Seçili Modeller — Aylık Trend ({yilA} vs {yilB})</div>
+          {selModels.map(function(model,mi){
+            var rows=monthlyByModel[model]||[];
+            if(!rows.length) return null;
+            var maxRev=Math.max.apply(null,rows.map(function(r){return Math.max(r.aRev,r.bRev);}),1)||1;
+            var W=460,H=180,padL=60,padB=32,padT=12;
+            var bW=Math.max(8,Math.floor((W-padL-16)/(rows.length*2+1)));
+            return(
+              <div key={model} style={{marginBottom:20}}>
+                <div className="fxb mb2">
+                  <span style={{fontSize:13,fontWeight:600,color:modelColors[mi]}}>{model}</span>
+                  <span style={{fontSize:11,color:"var(--tx2)"}}>
+                    {yilA}: {fmtTL(rows.reduce(function(a,r){return a+r.aRev;},0))} |
+                    {yilB}: {fmtTL(rows.reduce(function(a,r){return a+r.bRev;},0))}
+                  </span>
+                </div>
+                <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",maxWidth:W,height:"auto",display:"block"}}>
+                  {[0,0.5,1].map(function(t){
+                    var y=padT+(H-padT-padB)*(1-t);
+                    return <g key={t}>
+                      <line x1={padL} x2={W-8} y1={y} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
+                      <text x={padL-3} y={y+3} textAnchor="end" fontSize="8" fill="var(--tx3)">{Math.round(maxRev*t/1000)+"K"}</text>
+                    </g>;
+                  })}
+                  {rows.map(function(r,i){
+                    var x0=padL+6+i*(bW*2+4);
+                    var hA=(H-padT-padB)*r.aRev/maxRev;
+                    var hB=(H-padT-padB)*r.bRev/maxRev;
+                    var mon=r.month?r.month.slice(5):"";
+                    return <g key={i}>
+                      <rect x={x0} y={H-padB-hA} width={bW} height={Math.max(1,hA)} fill={modelColors[mi]} rx="1" opacity="0.9"/>
+                      {r.bRev>0&&<rect x={x0+bW+1} y={H-padB-hB} width={bW} height={Math.max(1,hB)} fill={modelColors[mi]} rx="1" opacity="0.35"/>}
+                      <text x={x0+bW} y={H-padB+12} textAnchor="middle" fontSize="7" fill="var(--tx3)">{mon}</text>
+                    </g>;
+                  })}
+                  <g>
+                    <rect x={padL} y={3} width={8} height={6} fill={modelColors[mi]} rx="1"/>
+                    <text x={padL+11} y={8} fontSize="7" fill="var(--tx2)">{yilA}</text>
+                    <rect x={padL+30} y={3} width={8} height={6} fill={modelColors[mi]} rx="1" opacity="0.4"/>
+                    <text x={padL+41} y={8} fontSize="7" fill="var(--tx2)">{yilB}</text>
+                  </g>
+                </svg>
+                {/* Aylık adet+ciro tablosu */}
+                <div className="tw" style={{marginTop:8}}><table style={{fontSize:11}}>
+                  <thead><tr>
+                    <th>Ay</th>
+                    <th style={{color:"var(--bdI)"}}>{yilA} Adet</th>
+                    <th style={{color:"var(--bdI)"}}>{yilA} Ciro</th>
+                    <th style={{color:"#f59e0b"}}>{yilB} Adet</th>
+                    <th style={{color:"#f59e0b"}}>{yilB} Ciro</th>
+                    <th>Fark</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.filter(function(r){return r.aRev>0||r.bRev>0;}).map(function(r){
+                      var diff=r.bRev>0?((r.aRev-r.bRev)/r.bRev*100):null;
+                      return(<tr key={r.month}>
+                        <td style={{fontWeight:500}}>{monthLabel(r.month)}</td>
+                        <td style={{color:"var(--bdI)"}}>{r.aQty}</td>
+                        <td style={{color:"var(--bdI)"}}>{fmtTL(r.aRev)}</td>
+                        <td style={{color:"#f59e0b"}}>{r.bQty||"—"}</td>
+                        <td style={{color:"#f59e0b"}}>{r.bRev>0?fmtTL(r.bRev):"—"}</td>
+                        <td>{diff!==null?<span style={{color:diff>0?"var(--txS)":diff<0?"var(--txD)":"inherit",fontWeight:500}}>{diff>0?"+":""}{diff.toFixed(1)}%</span>:"—"}</td>
+                      </tr>);
+                    })}
+                  </tbody>
+                </table></div>
+              </div>
+            );
+          })}
+        </div>
+      </div>}
+    </div>
+  );
+}
+
 /* ── SATIŞ RAPORLARI ── */
 function SatisRaporlari() {
   var _loading=useState(true); var loading=_loading[0]; var setLoading=_loading[1];
@@ -1283,19 +1617,28 @@ function SatisRaporlari() {
   }
 
   /* Aylık trend: {month → {A: rev, B: rev}} */
-  function monthTrend(keyFn){
+  function monthTrend(){
+    /* Ay bazında grupla: key = "01"..."12", A=yilA, B=yilB */
     var months = {};
-    function addData(arr, label){
-      arr.forEach(function(s){
-        var k = String(s.month||"—");
-        if(!months[k]) months[k] = {};
-        if(!months[k][label]) months[k][label] = 0;
-        months[k][label] += s.revenue;
-      });
-    }
-    addData(dataA, "A"); addData(dataB, "B");
-    return Object.keys(months).sort().map(function(m){
-      return {month:m, label:monthLabel(m), A:months[m].A||0, B:months[m].B||0};
+    dataA.forEach(function(s){
+      var k = String(s.month||"").slice(5,7); /* "2025-03" → "03" */
+      if(!k) return;
+      if(!months[k]) months[k]={month:k,A:0,B:0,aQty:0,bQty:0};
+      months[k].A += s.revenue||0;
+      months[k].aQty += Number(s.qty)||0;
+    });
+    dataB.forEach(function(s){
+      var k = String(s.month||"").slice(5,7);
+      if(!k) return;
+      if(!months[k]) months[k]={month:k,A:0,B:0,aQty:0,bQty:0};
+      months[k].B += s.revenue||0;
+      months[k].bQty += Number(s.qty)||0;
+    });
+    var AYLAR = ["01","02","03","04","05","06","07","08","09","10","11","12"];
+    var AY_ADLARI = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
+    return AYLAR.filter(function(k){return months[k];}).map(function(k){
+      var idx = parseInt(k,10)-1;
+      return Object.assign({},months[k],{label:AY_ADLARI[idx]});
     });
   }
 
@@ -1490,16 +1833,11 @@ function SatisRaporlari() {
       </div>
 
       {/* ÜRÜN BAZLI */}
-      {tab==="urun"&&<div className="g2">
-        <div className="card">
-          <div className="ct">Ürün Bazlı Satış — {yilA} vs {yilB}</div>
-          <BarChart rows={groupBy(dataA,"displayName")} rowsB={groupBy(dataB,"displayName")} topN={topN} compare={true}/>
-        </div>
-        <div className="card" style={{padding:0}}>
-          <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Ürün Karşılaştırma</div>
-          <CmpTable key_="displayName" colLabel="Ürün" topN={topN}/>
-        </div>
-      </div>}
+      {tab==="urun"&&<UrunBazliRapor
+        dataA={dataA} dataB={dataB} yilA={yilA} yilB={yilB}
+        topN={topN} enrichedFiltered={enrichedFiltered}
+        profitGroupBy={profitGroupBy} groupBy={groupBy}
+      />}
 
       {/* MÜŞTERİ BAZLI */}
       {tab==="musteri"&&<div className="g2">
@@ -1528,23 +1866,51 @@ function SatisRaporlari() {
       {/* AYLIK TREND */}
       {tab==="trend"&&<div>
         <div className="card mb4">
-          <div className="ct">Aylık Ciro Trendi — {yilA} vs {yilB}</div>
+          <div className="ct">Aylık Ciro Trendi — {yilA} (mavi) vs {yilB} (turuncu)</div>
           <TrendChart rows={trendRows}/>
         </div>
         <div className="card" style={{padding:0}}>
           <div className="tw"><table>
-            <thead><tr><th>Ay</th><th>{yilA} Ciro</th><th>{yilB} Ciro</th><th>Değişim</th></tr></thead>
+            <thead>
+              <tr style={{background:"var(--bg2)"}}>
+                <th rowSpan={2}>Ay</th>
+                <th colSpan={2} style={{textAlign:"center",color:"var(--bdI)"}}>{yilA}</th>
+                <th colSpan={2} style={{textAlign:"center",color:"#f59e0b"}}>{yilB}</th>
+                <th rowSpan={2}>Ciro Farkı</th>
+              </tr>
+              <tr style={{background:"var(--bg2)"}}>
+                <th style={{color:"var(--bdI)"}}>Ciro</th>
+                <th style={{color:"var(--bdI)"}}>Adet</th>
+                <th style={{color:"#f59e0b"}}>Ciro</th>
+                <th style={{color:"#f59e0b"}}>Adet</th>
+              </tr>
+            </thead>
             <tbody>
-              {trendRows.length===0&&<tr><td colSpan={4}><div className="empty" style={{padding:16}}><p>Veri yok</p></div></td></tr>}
+              {trendRows.length===0&&<tr><td colSpan={6}><div className="empty" style={{padding:16}}><p>Veri yok</p></div></td></tr>}
               {trendRows.map(function(r){
                 var diff = r.B>0?((r.A-r.B)/r.B*100):null;
                 return(<tr key={r.month}>
                   <td style={{fontWeight:500}}>{r.label}</td>
-                  <td><strong>{fmtTL(r.A)}</strong></td>
-                  <td style={{color:"var(--tx2)"}}>{r.B>0?fmtTL(r.B):"—"}</td>
+                  <td style={{color:"var(--bdI)",fontWeight:500}}>{fmtTL(r.A)}</td>
+                  <td style={{color:"var(--bdI)"}}>{r.aQty||"—"}</td>
+                  <td style={{color:"#f59e0b"}}>{r.B>0?fmtTL(r.B):"—"}</td>
+                  <td style={{color:"#f59e0b"}}>{r.bQty||"—"}</td>
                   <td>{diff!==null?<span style={{color:diff>0?"var(--txS)":diff<0?"var(--txD)":"inherit",fontWeight:500}}>{diff>0?"+":""}{diff.toFixed(1)}%</span>:"—"}</td>
                 </tr>);
               })}
+              {trendRows.length>0&&<tr style={{background:"var(--bg2)",fontWeight:600}}>
+                <td>Toplam</td>
+                <td style={{color:"var(--bdI)"}}>{fmtTL(trendRows.reduce(function(a,r){return a+r.A;},0))}</td>
+                <td style={{color:"var(--bdI)"}}>{trendRows.reduce(function(a,r){return a+(r.aQty||0);},0)}</td>
+                <td style={{color:"#f59e0b"}}>{fmtTL(trendRows.reduce(function(a,r){return a+r.B;},0))}</td>
+                <td style={{color:"#f59e0b"}}>{trendRows.reduce(function(a,r){return a+(r.bQty||0);},0)}</td>
+                <td>{(function(){
+                  var totA=trendRows.reduce(function(a,r){return a+r.A;},0);
+                  var totB=trendRows.reduce(function(a,r){return a+r.B;},0);
+                  var d=totB>0?((totA-totB)/totB*100):null;
+                  return d!==null?<span style={{color:d>0?"var(--txS)":d<0?"var(--txD)":"inherit",fontWeight:600}}>{d>0?"+":""}{d.toFixed(1)}%</span>:"—";
+                })()}</td>
+              </tr>}
             </tbody>
           </table></div>
         </div>
@@ -1989,6 +2355,10 @@ function EslestirmeEkrani() {
                   </td>
                   <td>
                     <div style={{fontWeight:500,fontSize:12}}>{it.parasutName}</div>
+                    <div style={{marginTop:2}}>
+                      {(it.sources||[]).indexOf("satis")>=0&&<span style={{fontSize:9,background:"var(--bgI)",color:"var(--txI)",padding:"1px 5px",borderRadius:8,marginRight:3}}>Satış</span>}
+                      {(it.sources||[]).indexOf("satinalma")>=0&&<span style={{fontSize:9,background:"var(--bgS)",color:"var(--txS)",padding:"1px 5px",borderRadius:8}}>Satın Alma</span>}
+                    </div>
                   </td>
                   <td style={{fontSize:12}}>
                     <div>{it.salesCount} sat.</div>
@@ -2834,7 +3204,6 @@ function App() {
     {id:"raporlar",ico:"ti-report-analytics",lbl:"Satış Raporları",roles:["admin","seller"]},
     {id:"satin_alma",ico:"ti-shopping-cart",lbl:"Satın Alma Geçmişi",roles:["admin","seller"]},
     {id:"sellers",ico:"ti-chart-bar",lbl:"Satıcı Performansı",roles:["admin"]},
-    {id:"sku",ico:"ti-arrows-exchange",lbl:"SKU Eşitleme",roles:["admin"]},
     {id:"eslestirme",ico:"ti-link",lbl:"Ürün Eşleştirme",roles:["admin"]},
     {id:"users",ico:"ti-user-cog",lbl:"Kullanıcılar",roles:["admin"]},
     {id:"integrations",ico:"ti-cloud",lbl:"Entegrasyonlar",roles:["admin"]}
