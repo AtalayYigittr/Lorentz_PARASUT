@@ -288,6 +288,24 @@ function overdueBalance(customerId, sales, customer){
     .reduce(function(a,s){ return a + s.price*s.qty; }, 0);
 }
 function fmtTL(n){ return "₺"+Math.round(n).toLocaleString("tr"); }
+
+/* Excel (CSV) export yardımcısı */
+function exportCSV(filename, headers, rows) {
+  var bom = "\uFEFF"; /* UTF-8 BOM — Excel Türkçe karakterleri doğru okusun */
+  var csv = bom + headers.join(";") + "\n" +
+    rows.map(function(r){ return r.map(function(v){
+      var s = String(v===null||v===undefined?"":v);
+      if(s.includes(";") || s.includes("\n") || s.includes('"')) s = '"'+s.replace(/"/g,'""')+'"';
+      return s;
+    }).join(";"); }).join("\n");
+  var blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename + ".csv";
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
 var TR_MONTHS = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
 function monthLabel(key){
   /* key formatı "YYYY-MM" */
@@ -1273,9 +1291,11 @@ function MusteriBazliRapor(p) {
   var yilA=p.yilA||"A", yilB=p.yilB||"B", topN=p.topN||10;
   var profitGroupBy=p.profitGroupBy||function(){return[];};
   var groupBy=p.groupBy||function(){return[];};
+  var enrichedFiltered=p.enrichedFiltered||[];
 
   var _search=useState(""); var search=_search[0]; var setSearch=_search[1];
   var _viewMode=useState("tablo"); var viewMode=_viewMode[0]; var setViewMode=_viewMode[1];
+  var _selCust=useState(null); var selCust=_selCust[0]; var setSelCust=_selCust[1];
 
   /* Tüm müşteri listesi */
   var grpA = groupBy(dataA,"contactName");
@@ -1366,8 +1386,11 @@ function MusteriBazliRapor(p) {
           <tbody>
             {filtered.length===0&&<tr><td colSpan={9}><div className="empty" style={{padding:16}}><p>Sonuç yok</p></div></td></tr>}
             {filtered.map(function(r){
-              return(<tr key={r.label}>
-                <td style={{fontWeight:500,fontSize:12}}>{r.label}</td>
+              var isSel=selCust===r.label;
+              return(<tr key={r.label} style={{cursor:"pointer",background:isSel?"var(--bgI)":"inherit"}} onClick={function(){setSelCust(isSel?null:r.label);}}>
+                <td style={{fontWeight:500,fontSize:12}}>
+                  <span style={{marginRight:4,fontSize:10,color:isSel?"var(--txI)":"var(--tx3)"}}>{isSel?"▼":"▶"}</span>
+                  {r.label}</td>
                 <td style={{color:"var(--bdI)"}}>{r.aQty}</td>
                 <td style={{color:"var(--bdI)",fontWeight:500}}>{fmtTL(r.aRev)}</td>
                 <td>{profitBadge(r.aProfit)}</td>
@@ -1381,6 +1404,74 @@ function MusteriBazliRapor(p) {
           </tbody>
         </table></div>
       </div>}
+
+      {/* Seçili müşterinin SKU bazlı detayı */}
+      {viewMode==="tablo"&&selCust&&(function(){
+        /* Seçili müşterinin A ve B yılı satışlarını SKU bazında grupla */
+        var custDataA = dataA.filter(function(s){return s.contactName===selCust;});
+        var custDataB = dataB.filter(function(s){return s.contactName===selCust;});
+        var skuGrpA={}, skuGrpB={};
+        custDataA.forEach(function(s){
+          var k=s.displayName||"—";
+          if(!skuGrpA[k]) skuGrpA[k]={sku:k,revenue:0,qty:0,unitCost:s.unitCost||0};
+          skuGrpA[k].revenue+=s.revenue||0; skuGrpA[k].qty+=Number(s.qty)||0;
+        });
+        custDataB.forEach(function(s){
+          var k=s.displayName||"—";
+          if(!skuGrpB[k]) skuGrpB[k]={sku:k,revenue:0,qty:0};
+          skuGrpB[k].revenue+=s.revenue||0; skuGrpB[k].qty+=Number(s.qty)||0;
+        });
+        var allSku=Array.from(new Set(Object.keys(skuGrpA).concat(Object.keys(skuGrpB)))).sort();
+        var skuRows=allSku.map(function(k){
+          var a=skuGrpA[k]||{revenue:0,qty:0,unitCost:0};
+          var b=skuGrpB[k]||{revenue:0,qty:0};
+          var avgCost=a.unitCost||0;
+          var profit=avgCost>0?(a.revenue/a.qty/avgCost-1)*100:null;
+          var diff=b.revenue>0?((a.revenue-b.revenue)/b.revenue*100):null;
+          return {sku:k,aRev:a.revenue,aQty:a.qty,profit:profit,bRev:b.revenue,bQty:b.qty,diff:diff};
+        }).sort(function(a,b){return b.aRev-a.aRev;});
+        return(
+          <div className="card mt3" style={{padding:0}}>
+            <div className="fxb" style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)"}}>
+              <span style={{fontWeight:500,fontSize:13}}>{selCust} — SKU Bazlı Detay</span>
+              <button className="btn bxs" onClick={function(){setSelCust(null);}}>✕ Kapat</button>
+            </div>
+            <div className="tw"><table>
+              <thead>
+                <tr style={{background:"var(--bg2)"}}>
+                  <th rowSpan={2}>SKU ID / Model No</th>
+                  <th colSpan={3} style={{textAlign:"center",color:"var(--bdI)"}}>{yilA}</th>
+                  <th colSpan={2} style={{textAlign:"center",color:"#f59e0b"}}>{yilB}</th>
+                  <th rowSpan={2}>Ciro Farkı</th>
+                </tr>
+                <tr style={{background:"var(--bg2)"}}>
+                  <th style={{color:"var(--bdI)"}}>Adet</th>
+                  <th style={{color:"var(--bdI)"}}>Ciro</th>
+                  <th style={{color:"var(--bdI)"}}>Kâr%</th>
+                  <th style={{color:"#f59e0b"}}>Adet</th>
+                  <th style={{color:"#f59e0b"}}>Ciro</th>
+                </tr>
+              </thead>
+              <tbody>
+                {skuRows.length===0&&<tr><td colSpan={7}><div className="empty" style={{padding:12}}><p>Satış verisi yok</p></div></td></tr>}
+                {skuRows.map(function(r){
+                  var profCls=r.profit===null?"":r.profit>=25?"bs":r.profit>=10?"bw":"bd_";
+                  var diffColor=r.diff===null?"var(--tx3)":r.diff>0?"var(--txS)":"var(--txD)";
+                  return(<tr key={r.sku}>
+                    <td style={{fontWeight:500,fontSize:12}}>{r.sku}</td>
+                    <td style={{color:"var(--bdI)"}}>{r.aQty}</td>
+                    <td style={{color:"var(--bdI)",fontWeight:500}}>{fmtTL(r.aRev)}</td>
+                    <td>{r.profit!==null?<span className={"badge "+profCls}>%{r.profit.toFixed(1)}</span>:<span style={{color:"var(--tx3)"}}>—</span>}</td>
+                    <td style={{color:"#f59e0b"}}>{r.bQty||"—"}</td>
+                    <td style={{color:"#f59e0b"}}>{r.bRev>0?fmtTL(r.bRev):"—"}</td>
+                    <td>{r.diff!==null?<span style={{color:diffColor,fontWeight:500}}>{r.diff>0?"+":""}{r.diff.toFixed(1)}%</span>:<span style={{color:"var(--tx3)"}}>—</span>}</td>
+                  </tr>);
+                })}
+              </tbody>
+            </table></div>
+          </div>
+        );
+      })()}
 
       {/* CİRO GRAFİĞİ */}
       {viewMode==="grafik"&&<div className="card">
@@ -2074,6 +2165,87 @@ function SatisRaporlari() {
   var totalDiff = totalRevB>0 ? ((totalRevA-totalRevB)/totalRevB*100) : null;
   var trendRows = monthTrend();
 
+  /* Export fonksiyonları */
+  function exportAktifSekme(){
+    var ts = new Date().toISOString().slice(0,10);
+    if(tab==="urun"){
+      var pgA2=profitGroupBy(dataA,"displayName");
+      var pgB2=profitGroupBy(dataB,"displayName");
+      var mapBE={};pgB2.forEach(function(r){mapBE[r.label]=r;});
+      var grpAE=groupBy(dataA,"displayName"),grpBE=groupBy(dataB,"displayName");
+      var mapAE={};grpAE.forEach(function(r){mapAE[r.label]=r;});var mapBR={};grpBE.forEach(function(r){mapBR[r.label]=r;});
+      var allL=Array.from(new Set(Object.keys(mapAE).concat(Object.keys(mapBR))));
+      exportCSV("Urun_Bazli_"+ts,
+        ["Model No",yilA+" Adet",yilA+" Ciro",yilA+" Karlilik%",yilB+" Adet",yilB+" Ciro",yilB+" Karlilik%","Ciro Degisim%"],
+        allL.slice(0,topN).map(function(l){
+          var a=mapAE[l]||{qty:0,revenue:0},b=mapBR[l]||{qty:0,revenue:0};
+          var pa=pgA2.find(function(r){return r.label===l;})||{profit:null};
+          var pb=pgB2.find(function(r){return r.label===l;})||{profit:null};
+          var d=b.revenue>0?((a.revenue-b.revenue)/b.revenue*100):null;
+          return [l,a.qty,Math.round(a.revenue),pa.profit!==null?pa.profit.toFixed(1):"",b.qty,Math.round(b.revenue),pb.profit!==null?pb.profit.toFixed(1):"",d!==null?d.toFixed(1):""];
+        })
+      );
+    } else if(tab==="musteri"){
+      var grpAM=groupBy(dataA,"contactName"),grpBM=groupBy(dataB,"contactName");
+      var mapAM={};grpAM.forEach(function(r){mapAM[r.label]=r;});var mapBM={};grpBM.forEach(function(r){mapBM[r.label]=r;});
+      var pgAM=profitGroupBy(dataA,"contactName"),pgBM=profitGroupBy(dataB,"contactName");
+      var pgAMm={};pgAM.forEach(function(r){pgAMm[r.label]=r;});var pgBMm={};pgBM.forEach(function(r){pgBMm[r.label]=r;});
+      var allLM=Array.from(new Set(Object.keys(mapAM).concat(Object.keys(mapBM))));
+      exportCSV("Musteri_Bazli_"+ts,
+        ["Musteri",yilA+" Adet",yilA+" Ciro",yilA+" Karlilik%",yilB+" Adet",yilB+" Ciro",yilB+" Karlilik%","Ciro Degisim%"],
+        allLM.map(function(l){
+          var a=mapAM[l]||{qty:0,revenue:0},b=mapBM[l]||{qty:0,revenue:0};
+          var pa=pgAMm[l]||{profit:null},pb=pgBMm[l]||{profit:null};
+          var d=b.revenue>0?((a.revenue-b.revenue)/b.revenue*100):null;
+          return [l,a.qty,Math.round(a.revenue),pa.profit!==null?pa.profit.toFixed(1):"",b.qty,Math.round(b.revenue),pb.profit!==null?pb.profit.toFixed(1):"",d!==null?d.toFixed(1):""];
+        })
+      );
+    } else if(tab==="kategori"){
+      var grpAK=groupBy(dataA,"category"),grpBK=groupBy(dataB,"category");
+      var mapAK={};grpAK.forEach(function(r){mapAK[r.label]=r;});var mapBK={};grpBK.forEach(function(r){mapBK[r.label]=r;});
+      var pgAK=profitGroupBy(dataA,"category"),pgBK=profitGroupBy(dataB,"category");
+      var pgAKm={};pgAK.forEach(function(r){pgAKm[r.label]=r;});var pgBKm={};pgBK.forEach(function(r){pgBKm[r.label]=r;});
+      var allLK=Array.from(new Set(Object.keys(mapAK).concat(Object.keys(mapBK))));
+      exportCSV("Kategori_Bazli_"+ts,
+        ["Kategori",yilA+" Ciro",yilA+" Karlilik%",yilB+" Ciro",yilB+" Karlilik%","Degisim%"],
+        allLK.map(function(l){
+          var a=mapAK[l]||{revenue:0},b=mapBK[l]||{revenue:0};
+          var pa=pgAKm[l]||{profit:null},pb=pgBKm[l]||{profit:null};
+          var d=b.revenue>0?((a.revenue-b.revenue)/b.revenue*100):null;
+          return [l,Math.round(a.revenue),pa.profit!==null?pa.profit.toFixed(1):"",Math.round(b.revenue),pb.profit!==null?pb.profit.toFixed(1):"",d!==null?d.toFixed(1):""];
+        })
+      );
+    } else if(tab==="trend"){
+      exportCSV("Aylik_Trend_"+ts,
+        ["Ay",yilA+" Ciro",yilA+" Adet",yilB+" Ciro",yilB+" Adet","Degisim%"],
+        trendRows.map(function(r){
+          var d=r.B>0?((r.A-r.B)/r.B*100):null;
+          return [r.label,Math.round(r.A),r.aQty||0,Math.round(r.B),r.bQty||0,d!==null?d.toFixed(1):""];
+        })
+      );
+    } else if(tab==="aralik"){
+      exportCSV("Tarih_Araligi_"+ts,
+        ["Tarih","Fatura No","Musteri","Urun","Kategori","Adet","Birim Fiyat","Ciro"],
+        dataRange.map(function(s){return [
+          String(s.invoiceDate||"").slice(0,10),s.invoiceNo||"",String(s.contactName||""),
+          s.displayName||"",s.category||"",s.qty,s.unitPrice,Math.round(s.revenue)
+        ];})
+      );
+    } else if(tab==="karlilik_model"){
+      var pgE=profitGroupBy(dataA,"displayName");
+      exportCSV("ModelNo_Karlilik_"+ts,
+        ["Model No","Toplam Ciro","Toplam Maliyet","Net Kar","Karlilik%","Adet"],
+        pgE.slice(0,topN).map(function(r){return [r.label,Math.round(r.totalRev),Math.round(r.totalCost),Math.round(r.totalRev-r.totalCost),r.profit!==null?r.profit.toFixed(1):"",r.qty];})
+      );
+    } else if(tab==="karlilik_kat"){
+      var pgKE=profitGroupBy(dataA,"category");
+      exportCSV("Kategori_Karlilik_"+ts,
+        ["Kategori","Toplam Ciro","Karlilik%","Adet"],
+        pgKE.map(function(r){return [r.label,Math.round(r.totalRev),r.profit!==null?r.profit.toFixed(1):"",r.qty];})
+      );
+    }
+  }
+
   return (
     <div>
       {/* Kontrol paneli */}
@@ -2103,6 +2275,9 @@ function SatisRaporlari() {
               {allCats.map(function(c){return <option key={c}>{c}</option>;})}
             </select>
           </div>
+          <button className="btn bxs" onClick={exportAktifSekme} title="Aktif sekmeyi Excel/CSV olarak indir">
+            <i className="ti ti-file-spreadsheet" aria-hidden="true"/>Excel İndir
+          </button>
         </div>
       </div>
 
@@ -2140,6 +2315,7 @@ function SatisRaporlari() {
       {tab==="musteri"&&<MusteriBazliRapor
         dataA={dataA} dataB={dataB} yilA={yilA} yilB={yilB}
         topN={topN} profitGroupBy={profitGroupBy} groupBy={groupBy}
+        enrichedFiltered={enrichedFiltered}
       />}
 
       {/* KATEGORİ BAZLI */}
