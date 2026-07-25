@@ -1951,9 +1951,16 @@ function SatisRaporlari() {
       var em = {};
       eslData.forEach(function(e){
         if(!e.parasutName) return;
-        var pn = String(e.parasutName).trim().replace(/\s+/g," ");
+        var pn  = String(e.parasutName).trim().replace(/\s+/g," ");
+        var smn = String(e.systemModelNo||"").trim();
         em[pn] = e;
         em[pn.toUpperCase()] = e;
+        /* systemModelNo'yu da key olarak ekle:
+           satış faturasında kısa kod (R03L4F) geldiğinde eşleşebilsin */
+        if(smn && !em[smn]) {
+          em[smn] = e;
+          em[smn.toUpperCase()] = e;
+        }
       });
       setEslestirme(em);
     }).catch(function(){ setLoading(false); });
