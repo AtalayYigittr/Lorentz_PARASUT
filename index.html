@@ -652,21 +652,35 @@ function StockList(props) {
     var parasutStock = parasutStockByModel[mnFromEsl] || parasutStockByModel[mn] || null;
     return Object.assign({}, p, {
       displayCategory: esl ? (esl.category||p.category||"—") : (p.category||"—"),
-      displayModelNo:  esl ? (esl.systemModelNo||p.modelNo) : p.modelNo,
-      parasutStock:    parasutStock
+      displayModelNo:  esl ? ((esl.systemModelNo||"").trim()||p.modelNo) : p.modelNo,
+      parasutStock:    parasutStock,
+      _sortKey:        (esl ? (esl.systemModelNo||"").trim().toLowerCase() : mn)
     });
+  });
+
+  /* displayModelNo bazında birleştir — aynı systemModelNo altındaki ürünleri tek satırda göster */
+  var mergedByModel = {};
+  enrichedProducts.forEach(function(p){
+    if(p.parasutStock===null) return;
+    var key = p.displayModelNo||p.modelNo;
+    if(!mergedByModel[key]){
+      mergedByModel[key] = Object.assign({},p,{_ids:[p.id],_allProducts:[p]});
+    } else {
+      /* Stok zaten displayModelNo bazında toplandı, çift sayım olmaması için sadece bir kez al */
+      mergedByModel[key]._ids.push(p.id);
+      mergedByModel[key]._allProducts.push(p);
+    }
   });
 
   /* Sadece Paraşüt stoğu olan ürünleri göster (eşleştirilmiş olanlar) */
   var cats=["Tümü"].concat(Array.from(new Set(
-    enrichedProducts.filter(function(p){return p.parasutStock!==null;})
+    Object.values(mergedByModel)
       .map(function(p){return p.displayCategory;}).filter(function(c){return c&&c!=="—";})
   )));
 
-  var filtered=enrichedProducts.filter(function(p){
-    if(p.parasutStock===null) return false;
+  var filtered=Object.values(mergedByModel).filter(function(p){
     var qq=q.toLowerCase();
-    return(String(p.modelNo||"").toLowerCase().includes(qq)||String(p.skuId||"").toLowerCase().includes(qq)||String(p.ean||"").includes(qq)||String(p.description||"").toLowerCase().includes(qq)||String(p.displayModelNo||"").toLowerCase().includes(qq))
+    return(String(p.modelNo||"").toLowerCase().includes(qq)||String(p.skuId||"").toLowerCase().includes(qq)||String(p.displayModelNo||"").toLowerCase().includes(qq))
       &&(cat==="Tümü"||p.displayCategory===cat);
   }).sort(function(a,b){
     return stockSort==="desc" ? (b.parasutStock||0)-(a.parasutStock||0) : (a.parasutStock||0)-(b.parasutStock||0);
@@ -710,15 +724,18 @@ function StockList(props) {
         <tbody>
           {filtered.length===0&&<tr><td colSpan={8}><div className="empty"><i className="ti ti-package"/><p>Ürün bulunamadı</p></div></td></tr>}
           {filtered.map(function(p){
-            var pSales=props.sales.filter(function(s){return String(s.productId)===String(p.id);});
+            var ids = p._ids || [String(p.id)];
+            var pSales=props.sales.filter(function(s){return ids.indexOf(String(s.productId))>=0;});
             var sold=pSales.filter(function(s){return new Date(s.date)>=ago90;}).reduce(function(a,s){return a+Number(s.qty||0);},0);
             var stock = p.parasutStock||0;
             var vel=sold>0?(stock/sold).toFixed(1)+"x":"∞";
             var cls=stock===0?"bd_":stock<10?"bw":"bs";
             var txt=stock===0?"Tükendi":stock<10?"Kritik":"Normal";
-            return(<tr key={p.id} style={{cursor:"pointer"}} onClick={function(){setSel(p);}}>
-              <td>{p.images&&p.images.length>0?<img src={p.images[0]} className="pimg" alt={p.displayModelNo}/>:<div className="pip"><i className="ti ti-photo" style={{fontSize:18,color:"var(--tx3)"}} aria-hidden="true"/></div>}</td>
-              <td style={{fontWeight:500}}>{p.displayModelNo}<div style={{fontSize:10,color:"var(--tx3)"}}>{p.skuId!==p.displayModelNo?p.skuId:""}</div></td>
+            return(<tr key={p.displayModelNo} style={{cursor:"pointer"}} onClick={function(){setSel(p);}}>
+              <td><div className="pip"><i className="ti ti-package" style={{fontSize:18,color:"var(--tx3)"}} aria-hidden="true"/></div></td>
+              <td style={{fontWeight:500}}>{p.displayModelNo}
+                {p._allProducts&&p._allProducts.length>1&&<div style={{fontSize:10,color:"var(--tx3)"}}>{p._allProducts.length} varyant birleştirildi</div>}
+              </td>
               <td><span className="tc txs">{p.skuId}</span></td>
               <td><span className="badge bi">{p.displayCategory}</span></td>
               <td>
@@ -732,7 +749,10 @@ function StockList(props) {
           })}
         </tbody>
       </table></div></div>
-      {sel&&<ProdDetail product={sel} lots={props.lots.filter(function(l){return String(l.productId)===String(sel.id);})} sales={props.sales.filter(function(s){return String(s.productId)===String(sel.id);})} onClose={function(){setSel(null);}} role={props.role} onUpdate={upd}/>}
+      {sel&&<ProdDetail product={sel}
+        lots={props.lots.filter(function(l){return (sel._ids||[String(sel.id)]).indexOf(String(l.productId))>=0;})}
+        sales={props.sales.filter(function(s){return (sel._ids||[String(sel.id)]).indexOf(String(s.productId))>=0;})}
+        onClose={function(){setSel(null);}} role={props.role} onUpdate={upd}/>}
     </div>
   );
 }
@@ -1929,18 +1949,31 @@ function SatisRaporlari() {
       maliyetData.forEach(function(m){ if(m.modelNo) mm[String(m.modelNo).trim()] = Number(m.avgUnitCost)||0; });
       setMaliyetMap(mm);
       var em = {};
-      eslData.forEach(function(e){ if(e.parasutName) em[String(e.parasutName)] = e; });
+      eslData.forEach(function(e){
+        if(!e.parasutName) return;
+        var pn = String(e.parasutName).trim().replace(/\s+/g," ");
+        em[pn] = e;
+        em[pn.toUpperCase()] = e;
+      });
       setEslestirme(em);
     }).catch(function(){ setLoading(false); });
   }
 
   /* Satış verisini zenginleştir: eşleştirme tablosundan kategori/ürün al */
+  /* maliyetMap: hem orijinal hem upper-case key ile ara */
+  var maliyetMapUpper = {};
+  Object.keys(maliyetMap).forEach(function(k){ maliyetMapUpper[k.trim().toUpperCase()] = maliyetMap[k]; });
+
   var enriched = satislar.map(function(s){
-    var pName = String(s.productName||"");
-    var esl = eslestirme[pName] || {};
-    var modelNo = esl.systemModelNo || pName || "—";
-    /* Maliyet: Paraşüt satın alma faturası ağırlıklı ortalama */
-    var avgCost = maliyetMap[modelNo] || maliyetMap[pName] || 0;
+    var pName = String(s.productName||"").trim().replace(/\s+/g," ");
+    var esl = eslestirme[pName] || eslestirme[pName.toUpperCase()] || {};
+    var modelNo = (esl.systemModelNo||"").trim() || pName || "—";
+    /* Maliyet: önce systemModelNo ile ara, yoksa orijinal pName ile */
+    var avgCost = maliyetMap[modelNo]
+               || maliyetMapUpper[modelNo.toUpperCase()]
+               || maliyetMap[pName]
+               || maliyetMapUpper[pName.toUpperCase()]
+               || 0;
     var unitPrice = Number(s.unitPrice)||0;
     var profit = avgCost>0 ? (unitPrice/avgCost - 1)*100 : null;
     return Object.assign({}, s, {
