@@ -1946,7 +1946,13 @@ function SatisRaporlari() {
       setLots(lotsData);
       /* Maliyet map: modelNo → avgUnitCost */
       var mm = {};
-      maliyetData.forEach(function(m){ if(m.modelNo) mm[String(m.modelNo).trim()] = Number(m.avgUnitCost)||0; });
+      maliyetData.forEach(function(m){
+        if(!m.modelNo) return;
+        var key = String(m.modelNo).trim();
+        /* Son alım fiyatını kullan; yoksa ağırlıklı ortalamaya dön */
+        mm[key] = Number(m.lastPrice)||Number(m.avgUnitCost)||0;
+        mm[key.toUpperCase()] = mm[key];
+      });
       setMaliyetMap(mm);
       var em = {};
       eslData.forEach(function(e){
