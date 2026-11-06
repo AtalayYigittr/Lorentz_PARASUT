@@ -846,7 +846,7 @@ function StockList(props) {
 
   return (
     <div>
-      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap"}}>
+      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap",position:"sticky",top:-20,zIndex:30,background:"var(--bg3)",padding:"12px 0 8px",marginTop:-12}}>
         <div className="fx g2g" style={{flex:1,minWidth:200}}>
           <div className="swrap" style={{flex:1,maxWidth:340}}>
             <i className="ti ti-search si" aria-hidden="true"/>
@@ -1073,7 +1073,7 @@ function Customers(props) {
   var _sh=useState(false); var showAdd=_sh[0]; var setShowAdd=_sh[1];
   var _se=useState(null); var edit=_se[0]; var setEdit=_se[1];
   var _f=useState({name:"",maturity:1,ciroPrimi:0,iskonto:0,riskLimit:1000000}); var fm=_f[0]; var setFm=_f[1];
-  var _tab=useState("quote"); var tab=_tab[0]; var setTab=_tab[1];
+  var _tab=useState("checks"); var tab=_tab[0]; var setTab=_tab[1];
   var _cy=useState(null); var ciroYearSel=_cy[0]; var setCiroYear=_cy[1];
   var _sf=useState("Tümü"); var sellerFilter=_sf[0]; var setSellerFilter=_sf[1];
   var ciroYears=Array.from(new Set(props.sales.map(function(s){return String(s.date||"").slice(0,4);}).filter(function(y){return /^\d{4}$/.test(y);}))).sort().reverse();
@@ -1113,9 +1113,9 @@ function Customers(props) {
       <div className="g2">
         <div className="card" style={{padding:0}}>
           <div style={{padding:"12px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Müşteri Listesi</div>
-          <div className="tw"><table><thead><tr><th>Müşteri</th><th>Sorumlu</th><th>Ciro{ciroYear!=="Tümü"?" ("+ciroYear+")":""}</th><th>Vade</th><th>Karlılık</th><th>Açık Hesap</th><th>Risk</th><th></th></tr></thead>
+          <div className="tw"><table><thead><tr><th>Müşteri</th><th>Sorumlu</th><th>Ciro{ciroYear!=="Tümü"?" ("+ciroYear+")":""}</th><th>Karlılık</th><th></th></tr></thead>
           <tbody>
-            {props.customers.length===0&&<tr><td colSpan={8}><div className="empty" style={{padding:20}}><p>Müşteri yok</p></div></td></tr>}
+            {props.customers.length===0&&<tr><td colSpan={5}><div className="empty" style={{padding:20}}><p>Müşteri yok</p></div></td></tr>}
             {props.customers.map(function(c){
               /* String ve number tip uyumsuzluğunu önlemek için String() dönüşümü */
               var custSales=props.sales.filter(function(s){return String(s.customerId)===String(c.id);});
@@ -1134,15 +1134,12 @@ function Customers(props) {
               return sellerFilter==="Tümü" || (sellerFilter==="__none__" ? !c.sellerId : String(c.sellerId)===sellerFilter);
             }).sort(function(a,b){return b.totalRev-a.totalRev;}).map(function(c){
               return(
-              <tr key={c.id} style={{cursor:"pointer",background:sel&&sel.id===c.id?"var(--bgI)":"inherit"}} onClick={function(){setSel(c);setTab("quote");}}>
+              <tr key={c.id} style={{cursor:"pointer",background:sel&&sel.id===c.id?"var(--bgI)":"inherit"}} onClick={function(){setSel(c);setTab("checks");}}>
                 <td style={{fontWeight:500}}>{c.name}{c.overdueBal>0&&<i className="ti ti-alert-triangle" style={{color:"var(--txD)",marginLeft:6,fontSize:13}} title="Vadesi geçmiş borç var" aria-hidden="true"/>}</td>
                 <td style={{fontSize:12}}>{sellerName(c.sellerId)||<span className="tc txs">—</span>}</td>
                 <td style={{fontWeight:500}}>{c.totalRev>0?fmtTL(c.totalRev):<span className="tc txs">—</span>}</td>
-                <td>{c.maturity}ay</td>
                 <td>{c.cp===null?<span className="tc txs">—</span>:<span className={"badge "+c.ppCls}>%{c.cp.toFixed(1)}</span>}</td>
-                <td style={{fontSize:12}}>{fmtTL(c.openBal)}{c.overdueBal>0&&<div style={{fontSize:10,color:"var(--txD)"}}>{fmtTL(c.overdueBal)} gecikmiş</div>}</td>
-                <td><span className={"badge "+c.riskCls}>%{c.riskPct.toFixed(0)}</span></td>
-                <td><div className="fx g1">{props.role==="admin"&&<button className="btn bxs" onClick={function(e){e.stopPropagation();openEdit(c);}}><i className="ti ti-edit" aria-hidden="true"/></button>}<button className="btn bxs btnP" onClick={function(e){e.stopPropagation();setSel(c);setTab("quote");}}><i className="ti ti-file-invoice" aria-hidden="true"/></button></div></td>
+                <td><div className="fx g1">{props.role==="admin"&&<button className="btn bxs" onClick={function(e){e.stopPropagation();openEdit(c);}}><i className="ti ti-edit" aria-hidden="true"/></button>}<button className="btn bxs btnP" onClick={function(e){e.stopPropagation();setSel(c);setTab("checks");}}><i className="ti ti-file-invoice" aria-hidden="true"/></button></div></td>
               </tr>
             );})}
           </tbody></table></div>
@@ -1151,7 +1148,7 @@ function Customers(props) {
           {sel?(<>
             <div className="ct fxb"><span><strong>{sel.name}</strong></span></div>
             <div className="tabs">
-              {[["quote","Fiyat Teklifi"],["risk","Risk / Açık Hesap"],["checks","Çekler"]].map(function(x){return <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>;})}
+              {[["checks","Çekler"]].map(function(x){return <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>;})}
             </div>
             {tab==="quote"&&<>
               <div className="infobox ibI mb3" style={{fontSize:11}}>Maliyet ÷ (1−%{sel.ciroPrimi}) ÷ (1−{sel.maturity}×%5) ÷ (1+%{sel.iskonto})</div>
@@ -3219,7 +3216,7 @@ function EslestirmeEkrani() {
       </div>
 
       {/* Araç çubuğu */}
-      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap"}}>
+      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap",position:"sticky",top:-20,zIndex:30,background:"var(--bg3)",padding:"12px 0 8px",marginTop:-12}}>
         <div className="fx g2g" style={{flex:1,flexWrap:"wrap"}}>
           <div className="swrap" style={{minWidth:220}}>
             <i className="ti ti-search si" aria-hidden="true"/>
@@ -4136,7 +4133,6 @@ function App() {
     {id:"dashboard",ico:"ti-dashboard",lbl:"Genel Durum",roles:["admin","seller","entry"]},
     {id:"stock",ico:"ti-package",lbl:"Stok Listesi",roles:["admin","seller","entry"]},
     {id:"customers",ico:"ti-users",lbl:"Müşteriler",roles:["admin","seller"]},
-    {id:"payments",ico:"ti-credit-card",lbl:"Ödeme & Vade",roles:["admin","seller"]},
     {id:"raporlar",ico:"ti-report-analytics",lbl:"Satış Raporları",roles:["admin","seller"]},
     {id:"satin_alma",ico:"ti-shopping-cart",lbl:"Satın Alma Geçmişi",roles:["admin","seller"]},
     {id:"sellers",ico:"ti-chart-bar",lbl:"Satıcı Performansı",roles:["admin"]},
@@ -4301,7 +4297,6 @@ function App() {
             {page==="dashboard"&&<Dashboard products={products} lots={lots} sales={sales} customers={customers}/>}
             {page==="stock"&&<StockList products={products} setProducts={setProducts} lots={lots} sales={sales} role={user.role} onAddProduct={function(){setShowAP(true);}} onAddLot={function(){setShowAL(true);}} onUpdateProduct={updateProduct} eslestirme={eslestirme} parasutSatislar={parasutSatislar} parasutUrunler={parasutUrunler} userName={user.name}/>}
             {page==="customers"&&<Customers users={allUsers} customers={customers} setCustomers={setCustomers} products={products} lots={lots} sales={sales} checks={checks} setChecks={setChecks} role={user.role} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onAddCheck={addCheck} onUpdateCheck={updateCheck}/>}
-            {page==="payments"&&<PaymentTracking sales={sales} customers={customers} checks={checks} parasutSatislar={parasutSatislar}/>}
             {page==="raporlar"&&<SatisRaporlari/>}
             {page==="satin_alma"&&<SatinAlmaGecmisi/>}
             {page==="sellers"&&<SellerPerformance users={allUsers} sales={sales} customers={customers}/>}
