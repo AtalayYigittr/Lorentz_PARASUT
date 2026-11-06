@@ -692,6 +692,7 @@ function StockList(props) {
   var _c=useState("Tümü"); var cat=_c[0]; var setCat=_c[1];
   var _s=useState(null); var sel=_s[0]; var setSel=_s[1];
   var _stockSort=useState("desc"); var stockSort=_stockSort[0]; var setStockSort=_stockSort[1];
+  var _stFilter=useState("Tümü"); var stFilter=_stFilter[0]; var setStFilter=_stFilter[1];
   var _slips=useState([]); var slips=_slips[0]; var setSlips=_slips[1];
   var _showSayim=useState(false); var showSayim=_showSayim[0]; var setShowSayim=_showSayim[1];
   var _showHist=useState(false); var showHist=_showHist[0]; var setShowHist=_showHist[1];
@@ -821,7 +822,19 @@ function StockList(props) {
       .map(function(p){return p.displayCategory;}).filter(function(c){return c&&c!=="—";})
   )));
 
+  function stockStatus(p){
+    var sold=p.sold3m||0; var stock=p.realStock||0;
+    var ratio = sold>0 ? stock/sold : null;
+    var vel = ratio===null ? "∞" : ratio.toFixed(2)+"x ("+(ratio*3).toFixed(1)+" ay)";
+    var st;
+    if(stock<=0 && sold===0) st={t:"Tükendi",cls:"bd_"};
+    else if(stock<=0 || (ratio!==null && ratio<0.9)) st={t:"Sipariş",sty:{background:"#fef3c7",color:"#92400e"}};
+    else if(ratio===null || ratio>1.1) st={t:"Yavaş ürün",sty:{background:"#ede9fe",color:"#6d28d9"}};
+    else st={t:"Normal",sty:{background:"#dcfce7",color:"#166534"}};
+    return {sold:sold,vel:vel,st:st};
+  }
   var filtered=Object.values(mergedByModel).filter(function(p){
+    if(stFilter!=="Tümü" && stockStatus(p).st.t!==stFilter) return false;
     var qq=q.toLowerCase();
     return(String(p.modelNo||"").toLowerCase().includes(qq)||String(p.skuId||"").toLowerCase().includes(qq)||String(p.displayModelNo||"").toLowerCase().includes(qq))
       &&(cat==="Tümü"||p.displayCategory===cat);
@@ -841,6 +854,9 @@ function StockList(props) {
           </div>
           <select value={cat} onChange={function(e){setCat(e.target.value);}} style={{width:"auto",minWidth:120}}>
             {cats.map(function(c){return <option key={c}>{c}</option>;})}
+          </select>
+          <select value={stFilter} onChange={function(e){setStFilter(e.target.value);}} style={{width:"auto",minWidth:120}} title="Duruma göre filtre">
+            {["Tümü","Sipariş","Normal","Yavaş ürün","Tükendi"].map(function(c){return <option key={c} value={c}>{c==="Tümü"?"Tüm Durumlar":c}</option>;})}
           </select>
         </div>
         {(props.role==="admin"||props.role==="entry")&&<div className="fx g2g">
@@ -869,15 +885,8 @@ function StockList(props) {
         <tbody>
           {filtered.length===0&&<tr><td colSpan={8}><div className="empty"><i className="ti ti-package"/><p>Ürün bulunamadı</p></div></td></tr>}
           {filtered.map(function(p){
-            var sold=p.sold3m||0;
             var stock = p.realStock||0;
-            var ratio = sold>0 ? stock/sold : null;
-            var vel = ratio===null ? "∞" : ratio.toFixed(2)+"x ("+(ratio*3).toFixed(1)+" ay)";
-            var st;
-            if(stock<=0 && sold===0) st={t:"Tükendi",cls:"bd_"};
-            else if(stock<=0 || (ratio!==null && ratio<0.9)) st={t:"Sipariş",sty:{background:"#fef3c7",color:"#92400e"}};
-            else if(ratio===null || ratio>1.1) st={t:"Yavaş ürün",sty:{background:"#ede9fe",color:"#6d28d9"}};
-            else st={t:"Normal",sty:{background:"#dcfce7",color:"#166534"}};
+            var sa = stockStatus(p); var sold=sa.sold; var vel=sa.vel; var st=sa.st;
             return(<tr key={p.displayModelNo} style={{cursor:"pointer"}} onClick={function(){setSel(p);}}>
               <td><div className="pip"><i className="ti ti-package" style={{fontSize:18,color:"var(--tx3)"}} aria-hidden="true"/></div></td>
               <td style={{fontWeight:500}}>{p.displayModelNo}
@@ -1065,8 +1074,10 @@ function Customers(props) {
   var _se=useState(null); var edit=_se[0]; var setEdit=_se[1];
   var _f=useState({name:"",maturity:1,ciroPrimi:0,iskonto:0,riskLimit:1000000}); var fm=_f[0]; var setFm=_f[1];
   var _tab=useState("quote"); var tab=_tab[0]; var setTab=_tab[1];
-  var _cy=useState("Tümü"); var ciroYear=_cy[0]; var setCiroYear=_cy[1];
+  var _cy=useState(null); var ciroYearSel=_cy[0]; var setCiroYear=_cy[1];
+  var _sf=useState("Tümü"); var sellerFilter=_sf[0]; var setSellerFilter=_sf[1];
   var ciroYears=Array.from(new Set(props.sales.map(function(s){return String(s.date||"").slice(0,4);}).filter(function(y){return /^\d{4}$/.test(y);}))).sort().reverse();
+  var ciroYear = ciroYearSel===null ? (ciroYears[0]||"Tümü") : ciroYearSel;
   var sellers=(props.users||[]).filter(function(u){return u.role==="seller"||u.role==="admin";});
   function sellerName(id){var u=(props.users||[]).find(function(x){return String(x.id)===String(id);});return u?u.name:"";}
   function s(k){return function(e){setFm(function(f){var n=Object.assign({},f);n[k]=e.target.value;return n;});};}
@@ -1091,6 +1102,11 @@ function Customers(props) {
         <div className="fx g2g"><label className="fl" style={{margin:0}}>Ciro yılı</label>
           <select value={ciroYear} onChange={function(e){setCiroYear(e.target.value);}} style={{width:"auto"}}>
             <option>Tümü</option>{ciroYears.map(function(y){return <option key={y}>{y}</option>;})}
+          </select>
+          <label className="fl" style={{margin:0}}>Sorumlu</label>
+          <select value={sellerFilter} onChange={function(e){setSellerFilter(e.target.value);}} style={{width:"auto"}}>
+            <option value="Tümü">Tümü</option><option value="__none__">Atanmamış</option>
+            {sellers.map(function(u){return <option key={u.id} value={String(u.id)}>{u.name}</option>;})}
           </select></div>
         {props.role==="admin"&&<button className="btn btnP" onClick={function(){setFm({name:"",maturity:1,ciroPrimi:0,iskonto:0,riskLimit:1000000,sellerId:""});setEdit(null);setShowAdd(true);}}><i className="ti ti-plus" aria-hidden="true"/>Müşteri Ekle</button>}
       </div>
@@ -1114,6 +1130,8 @@ function Customers(props) {
               var riskPct = limit>0 ? (openBal/limit*100) : 0;
               var riskCls = riskPct>=100?"bd_":riskPct>=70?"bw":"bs";
               return Object.assign({},c,{cp:cp,ppCls:ppCls,totalRev:totalRev,openBal:openBal,overdueBal:overdueBal,riskPct:riskPct,riskCls:riskCls,custSales:custSales});
+            }).filter(function(c){
+              return sellerFilter==="Tümü" || (sellerFilter==="__none__" ? !c.sellerId : String(c.sellerId)===sellerFilter);
             }).sort(function(a,b){return b.totalRev-a.totalRev;}).map(function(c){
               return(
               <tr key={c.id} style={{cursor:"pointer",background:sel&&sel.id===c.id?"var(--bgI)":"inherit"}} onClick={function(){setSel(c);setTab("quote");}}>
@@ -1370,33 +1388,66 @@ function NewOrderModal(props) {
 
 /* ── SATICI BAZLI KARLILIK ── */
 function SellerPerformance(props) {
+  var _ld=useState(true); var loading=_ld[0]; var setLoading=_ld[1];
+  var _rows=useState([]); var rows=_rows[0]; var setRows=_rows[1];
+  var _yr=useState(null); var yrSel=_yr[0]; var setYr=_yr[1];
+  useEffect(function(){
+    function post(b){return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}).then(function(r){return r.json();}).then(function(r){return r.ok?(r.data||[]):[];}).catch(function(){return [];});}
+    Promise.all([post({action:"getParasutSatislar"}),post({action:"get",sheet:"ParasutSatinAlma"}),post({action:"get",sheet:"ParasutEslestirme"})]).then(function(r){
+      var norm=function(v){return String(v||"").trim().replace(/\s+/g," ").toUpperCase();};
+      var nameToModel={};
+      r[2].forEach(function(e){var pn=norm(e.parasutName),smn=norm(e.systemModelNo); if(pn&&smn) nameToModel[pn]=smn; if(smn) nameToModel[smn]=smn;});
+      var keyOf=function(n){var u=norm(n);return nameToModel[u]||u;};
+      var purch={};
+      r[1].forEach(function(p){var k=keyOf(p.productName),d=String(p.invoiceDate||"").slice(0,10),pr=Number(p.unitPrice)||0; if(!k||!d||pr<=0) return; (purch[k]=purch[k]||[]).push({d:d,p:pr});});
+      Object.keys(purch).forEach(function(k){purch[k].sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:0;});});
+      function costAt(k,d){var l=purch[k]; if(!l) return 0; var best=null; for(var i=0;i<l.length;i++){if(l[i].d<=d) best=l[i]; else break;} return (best||l[0]).p;}
+      var custSeller={};
+      (props.customers||[]).forEach(function(c){ if(c.name) custSeller[norm(c.name)]=c.sellerId; });
+      setRows(r[0].map(function(s){
+        var d=String(s.invoiceDate||"").slice(0,10), q=Number(s.qty)||0, p=Number(s.unitPrice)||0, c=costAt(keyOf(s.productName),d);
+        var sid=custSeller[norm(s.contactName)];
+        return {year:d.slice(0,4),sellerId:(sid===undefined||sid===null||sid==="")?"":String(sid),qty:q,rev:p*q,cost:c*q,costedRev:c>0?p*q:0};
+      }));
+      setLoading(false);
+    });
+  },[props.customers]);
+  var years=Array.from(new Set(rows.map(function(x){return x.year;}).filter(function(y){return /^\d{4}$/.test(y);}))).sort().reverse();
+  var yr = yrSel===null ? (years[0]||"Tümü") : yrSel;
+  var data = yr==="Tümü" ? rows : rows.filter(function(x){return x.year===yr;});
   var users=props.users.filter(function(u){return u.role!=="entry";});
+  var list=users.map(function(u){return {id:String(u.id),name:u.name};}).concat([{id:"",name:"Atanmamış (sorumlu yok)"}]);
+  var agg=list.map(function(u){
+    var d=data.filter(function(x){return x.sellerId===u.id;});
+    var qty=d.reduce(function(a,x){return a+x.qty;},0), rev=d.reduce(function(a,x){return a+x.rev;},0), cost=d.reduce(function(a,x){return a+x.cost;},0), cr=d.reduce(function(a,x){return a+x.costedRev;},0);
+    return {u:u,n:d.length,qty:qty,rev:rev,cost:cost,pp:cost>0?(cr/cost-1)*100:null};
+  }).filter(function(a){return a.n>0||a.u.id!=="";});
   return (
     <div>
       <div className="fxb mb4">
-        <div><h2 style={{fontSize:15,fontWeight:500}}>Satıcı Performansı</h2><p style={{fontSize:12,color:"var(--tx2)",marginTop:2}}>Satıcı bazlı ciro ve karlılık</p></div>
+        <div><h2 style={{fontSize:15,fontWeight:500}}>Satıcı Performansı</h2><p style={{fontSize:12,color:"var(--tx2)",marginTop:2}}>Paraşüt satışları, müşterinin sorumlu satıcısına göre</p></div>
+        <div className="fx g2g"><label className="fl" style={{margin:0}}>Yıl</label>
+          <select value={yr} onChange={function(e){setYr(e.target.value);}} style={{width:"auto"}}>
+            <option>Tümü</option>{years.map(function(y){return <option key={y}>{y}</option>;})}
+          </select></div>
       </div>
+      {loading?<div className="empty" style={{padding:40}}><i className="ti ti-refresh spin"/><p>Yükleniyor...</p></div>:
       <div className="card" style={{padding:0}}><div className="tw"><table>
         <thead><tr><th>Satıcı</th><th>Satış Adedi</th><th>Toplam Ciro</th><th>Toplam Maliyet</th><th>Karlılık</th></tr></thead>
         <tbody>
-          {users.length===0&&<tr><td colSpan={5}><div className="empty" style={{padding:20}}><p>Satıcı yok</p></div></td></tr>}
-          {users.map(function(u){
-            var uSales=props.sales.filter(function(s){return s.sellerId===u.id;});
-            var totalQty=uSales.reduce(function(a,s){return a+s.qty;},0);
-            var totalRev=uSales.reduce(function(a,s){return a+s.qty*s.price;},0);
-            var totalCost=uSales.reduce(function(a,s){return a+s.qty*s.cost;},0);
-            var pp = uSales.length>0 ? weightedProfit(uSales) : null;
-            var ppCls = pp===null?"":pp>=25?"bs":pp>=10?"bw":"bd_";
-            return(<tr key={u.id}>
-              <td><div className="fx g2g"><div className="av" style={{width:24,height:24,fontSize:10}}>{initials(u.name)}</div>{u.name}</div></td>
-              <td>{totalQty}</td>
-              <td>{fmtTL(totalRev)}</td>
-              <td>{fmtTL(totalCost)}</td>
-              <td>{pp===null?<span className="tc txs">—</span>:<span className={"badge "+ppCls}>%{pp.toFixed(1)}</span>}</td>
+          {agg.length===0&&<tr><td colSpan={5}><div className="empty" style={{padding:20}}><p>Veri yok</p></div></td></tr>}
+          {agg.map(function(a){
+            var ppCls = a.pp===null?"":a.pp>=25?"bs":a.pp>=10?"bw":"bd_";
+            return(<tr key={a.u.id||"none"}>
+              <td><div className="fx g2g"><div className="av" style={{width:24,height:24,fontSize:10}}>{initials(a.u.name)}</div>{a.u.name}</div></td>
+              <td>{a.qty.toLocaleString("tr")}</td>
+              <td>{fmtTL(a.rev)}</td>
+              <td>{fmtTL(a.cost)}</td>
+              <td>{a.pp===null?<span className="tc txs">—</span>:<span className={"badge "+ppCls}>%{a.pp.toFixed(1)}</span>}</td>
             </tr>);
           })}
         </tbody>
-      </table></div></div>
+      </table></div></div>}
     </div>
   );
 }
@@ -2178,6 +2229,9 @@ function SatisRaporlari() {
   var _lots=useState([]); var lots=_lots[0]; var setLots=_lots[1];
   /* Paraşüt satın alma ağırlıklı ortalama maliyetleri: modelNo → avgUnitCost */
   var _mm=useState({}); var maliyetMap=_mm[0]; var setMaliyetMap=_mm[1];
+  var _custL=useState([]); var custList=_custL[0]; var setCustList=_custL[1];
+  var _userL=useState([]); var userList=_userL[0]; var setUserList=_userL[1];
+  var _sellF=useState("Tümü"); var sellerFilter=_sellF[0]; var setSellerFilter=_sellF[1];
   /* Alım geçmişi: Paraşüt satın alma satırları (tarih bazlı son alım fiyatı için) */
   var _pur=useState([]); var purchases=_pur[0]; var setPurchases=_pur[1];
 
@@ -2191,9 +2245,13 @@ function SatisRaporlari() {
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"ParasutEslestirme"})}).then(function(r){return r.json();}),
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"Lots"})}).then(function(r){return r.json();}),
       fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"getParasutMaliyetler"})}).then(function(r){return r.json();}),
-      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"ParasutSatinAlma"})}).then(function(r){return r.json();})
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"ParasutSatinAlma"})}).then(function(r){return r.json();}),
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"Customers"})}).then(function(r){return r.json();}),
+      fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"get",sheet:"Users"})}).then(function(r){return r.json();})
     ]).then(function(results){
       setLoading(false);
+      setCustList(results[6]&&results[6].ok ? (results[6].data||[]) : []);
+      setUserList(results[7]&&results[7].ok ? (results[7].data||[]) : []);
       setPurchases(results[5]&&results[5].ok ? (results[5].data||[]) : []);
       var satisData = results[0].ok ? (results[0].data||[]) : [];
       var eslData   = results[2].ok ? (results[2].data||[]) : [];
@@ -2264,8 +2322,17 @@ function SatisRaporlari() {
     return 0;
   }
 
+  /* Satıcı: müşteri adı → müşterinin sorumlu satıcısı */
+  var normN = function(v){return String(v||"").trim().replace(/\s+/g," ").toUpperCase();};
+  var custSeller = {};
+  custList.forEach(function(c){ if(c.name) custSeller[normN(c.name)] = c.sellerId; });
+  var userName = {};
+  userList.forEach(function(u){ userName[String(u.id)] = u.name; });
+
   var enriched = satislar.map(function(s){
     var pName = String(s.productName||"").trim().replace(/\s+/g," ");
+    var sid = custSeller[normN(s.contactName)];
+    var hasSeller = sid!==undefined && sid!==null && sid!=="";
     var esl = eslestirme[pName] || eslestirme[pName.toUpperCase()] || {};
     var modelNo = (esl.systemModelNo||"").trim() || pName || "—";
     /* Maliyet: önce systemModelNo ile ara, yoksa orijinal pName ile */
@@ -2278,6 +2345,8 @@ function SatisRaporlari() {
     var unitPrice = Number(s.unitPrice)||0;
     var profit = avgCost>0 ? (unitPrice/avgCost - 1)*100 : null;
     return Object.assign({}, s, {
+      sellerId:    hasSeller ? String(sid) : "",
+      sellerName:  hasSeller ? (userName[String(sid)]||("#"+sid)) : "Atanmamış",
       displayName: modelNo,
       category:    esl.category || s.category || "—",
       revenue:     unitPrice * (Number(s.qty)||0),
@@ -2292,7 +2361,13 @@ function SatisRaporlari() {
   var allCats = ["Tümü"].concat(Array.from(new Set(enriched.map(function(s){return s.category;}).filter(function(c){return c&&c!=="—";}))).sort());
 
   /* Kategori filtreli enriched */
-  var enrichedFiltered = catFilter==="Tümü" ? enriched : enriched.filter(function(s){return s.category===catFilter;});
+  var enrichedFiltered = enriched.filter(function(s){
+    if(catFilter!=="Tümü" && s.category!==catFilter) return false;
+    if(sellerFilter==="__none__") return !s.sellerId;
+    if(sellerFilter!=="Tümü") return s.sellerId===sellerFilter;
+    return true;
+  });
+  var sellerOptions = Array.from(new Set(enriched.map(function(s){return s.sellerId;}).filter(Boolean)));
 
   /* Yıl listesi */
   var years = Array.from(new Set(enriched.map(function(s){return s.year;}).filter(function(y){return y!=="—";}))).sort().reverse();
@@ -2609,6 +2684,13 @@ function SatisRaporlari() {
               {allCats.map(function(c){return <option key={c}>{c}</option>;})}
             </select>
           </div>
+          <div>
+            <label className="fl">Satıcı Filtresi</label>
+            <select value={sellerFilter} onChange={function(e){setSellerFilter(e.target.value);}} style={{minWidth:140}}>
+              <option value="Tümü">Tümü</option><option value="__none__">Atanmamış</option>
+              {sellerOptions.map(function(id){return <option key={id} value={id}>{userName[id]||("#"+id)}</option>;})}
+            </select>
+          </div>
           <button className="btn bxs" onClick={exportAktifSekme} title="Aktif sekmeyi Excel/CSV olarak indir">
             <i className="ti ti-file-spreadsheet" aria-hidden="true"/>Excel İndir
           </button>
@@ -2633,7 +2715,7 @@ function SatisRaporlari() {
 
       {/* Sekme menüsü */}
       <div className="tabs">
-        {[["urun","Ürün Bazlı"],["musteri","Müşteri Bazlı"],["kategori","Kategori Bazlı"],["trend","Aylık Trend"],["karlilik_model","Model No Karlılık"],["karlilik_kat","Kategori Karlılık"],["aralik","Tarih Aralığı"]].map(function(x){return(
+        {[["urun","Ürün Bazlı"],["musteri","Müşteri Bazlı"],["kategori","Kategori Bazlı"],["trend","Aylık Trend"],["karlilik_model","Model No Karlılık"],["karlilik_kat","Kategori Karlılık"],["aralik","Tarih Aralığı"],["satici","Satıcı Bazlı"]].map(function(x){return(
           <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>
         );})}
       </div>
@@ -2792,6 +2874,31 @@ function SatisRaporlari() {
       </div>}
 
       {/* KATEGORİ BAZLI KARLILIK */}
+      {/* SATICI BAZLI */}
+      {tab==="satici"&&<div className="g2">
+        <div className="card">
+          <div className="ct">Satıcı Bazlı Ciro — {yilA} vs {yilB}</div>
+          <BarChart rows={groupBy(dataA,"sellerName")} rowsB={groupBy(dataB,"sellerName")} topN={topN} compare={true}/>
+        </div>
+        <div className="card" style={{padding:0}}>
+          <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Satıcı Karşılaştırması</div>
+          <div className="tw"><table>
+            <thead><tr><th>Satıcı</th><th>{yilA} Adet</th><th>{yilA} Ciro</th><th>{yilA} Maliyet</th><th>{yilA} Karlılık</th><th>{yilB} Ciro</th><th>{yilB} Karlılık</th></tr></thead>
+            <tbody>{(function(){
+              var pgA=profitGroupBy(dataA,"sellerName"); var pgB=profitGroupBy(dataB,"sellerName"); var mb={};
+              pgB.forEach(function(r){mb[r.label]=r;});
+              if(!pgA.length) return <tr><td colSpan={7}><div className="empty" style={{padding:16}}><p>Veri yok</p></div></td></tr>;
+              function cl(p){return p===null||p===undefined?"":p>=25?"bs":p>=10?"bw":"bd_";}
+              return pgA.map(function(r){var rb=mb[r.label]||{profit:null,totalRev:0};
+                return <tr key={r.label}><td style={{fontWeight:500}}>{r.label}</td><td>{r.qty}</td><td>{fmtTL(r.totalRev)}</td><td>{fmtTL(r.totalCost)}</td>
+                  <td>{r.profit!==null?<span className={"badge "+cl(r.profit)}>%{r.profit.toFixed(1)}</span>:"—"}</td>
+                  <td style={{color:"var(--tx2)"}}>{rb.totalRev>0?fmtTL(rb.totalRev):"—"}</td>
+                  <td>{rb.profit!==null?<span className={"badge "+cl(rb.profit)}>%{rb.profit.toFixed(1)}</span>:"—"}</td></tr>;});
+            })()}</tbody>
+          </table></div>
+        </div>
+      </div>}
+
       {tab==="karlilik_kat"&&<div>
         <div className="infobox ibI mb3" style={{fontSize:11}}>Karlılık = (Satış Fiyatı / FIFO Maliyet − 1) × 100 | {yilA} — Kategori filtresi uygulandı</div>
         <div className="g2">
@@ -4197,7 +4304,7 @@ function App() {
             {page==="payments"&&<PaymentTracking sales={sales} customers={customers} checks={checks} parasutSatislar={parasutSatislar}/>}
             {page==="raporlar"&&<SatisRaporlari/>}
             {page==="satin_alma"&&<SatinAlmaGecmisi/>}
-            {page==="sellers"&&<SellerPerformance users={allUsers} sales={sales}/>}
+            {page==="sellers"&&<SellerPerformance users={allUsers} sales={sales} customers={customers}/>}
             {page==="sku"&&<SkuMap products={products} skuMap={skuMap} setSkuMap={setSkuMap} role={user.role} onAdd={addSkuMapping} onDelete={deleteSkuMapping}/>}
             {page==="eslestirme"&&<EslestirmeEkrani/>}
             {page==="users"&&<Users users={allUsers} cur={user} onAdd={addUser} onDelete={deleteUser}/>}
