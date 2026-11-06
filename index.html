@@ -588,7 +588,7 @@ function Dashboard(props) {
                   <td style={{fontSize:12}}>{p&&p.modelNo}</td>
                   <td style={{fontSize:12}}>{l.expiryDate}</td>
                   <td style={{fontSize:12,fontWeight:500,color:d<30?"var(--txD)":"inherit"}}>{d<0?"-"+Math.abs(d):d}</td>
-                  <td><span className={"badge "+(st.cls||"")} style={st.sty}>{st.t}</span></td>
+                  <td><span className={"badge "+cls}>{txt}</span></td>
                 </tr>);
               })}
             </tbody>
@@ -890,7 +890,7 @@ function StockList(props) {
                 <div style={{fontSize:10,color:"var(--tx3)"}}>{p.slipDate?("Sayım: "+p.slipDate):"Sayım yok"}</div>
               </td>
               <td><span className="ts">{vel}</span></td>
-              <td><span className={"badge "+cls}>{txt}</span></td>
+              <td><span className={"badge "+(st.cls||"")} style={st.sty}>{st.t}</span></td>
               <td><button className="btn bxs" onClick={function(e){e.stopPropagation();setSel(p);}}><i className="ti ti-eye" aria-hidden="true"/></button></td>
             </tr>);
           })}
