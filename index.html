@@ -689,7 +689,9 @@ function ProdDetail(props) {
 /* ── STOK LİSTESİ ── */
 function StockList(props) {
   var _q=useState(""); var q=_q[0]; var setQ=_q[1];
-  var _c=useState("Tümü"); var cat=_c[0]; var setCat=_c[1];
+  var _c=useState([]); var catSel=_c[0]; var setCatSel=_c[1];
+  var _co=useState(false); var catOpen=_co[0]; var setCatOpen=_co[1];
+  var _sc=useState("sold12"); var sortCol=_sc[0]; var setSortCol=_sc[1];
   var _s=useState(null); var sel=_s[0]; var setSel=_s[1];
   var _stockSort=useState("desc"); var stockSort=_stockSort[0]; var setStockSort=_stockSort[1];
   var _stFilter=useState("Tümü"); var stFilter=_stFilter[0]; var setStFilter=_stFilter[1];
@@ -768,7 +770,8 @@ function StockList(props) {
   addMove(props.parasutSatislar||[], "sales");
   addMove(purchases, "purch");
   var ago90Str = ago90.toISOString().slice(0,10);
-  var realByModel = {}; var sold3mByModel = {};
+  var realByModel = {}; var sold3mByModel = {}; var sold12ByModel = {};
+  var ago365Str = new Date(new Date()-365*864e5).toISOString().slice(0,10);
   var allKeys = {};
   Object.keys(movesByModel).forEach(function(k){allKeys[k]=1;});
   Object.keys(latestSlip).forEach(function(k){allKeys[k]=1;});
@@ -779,6 +782,7 @@ function StockList(props) {
     mv.purch.forEach(function(m){ if(m.d>cutoff) stock+=m.q; });
     mv.sales.forEach(function(m){ if(m.d>cutoff) stock-=m.q; });
     realByModel[k]=stock;
+    sold12ByModel[k]=mv.sales.filter(function(m){return m.d>=ago365Str;}).reduce(function(a,m){return a+m.q;},0);
     sold3mByModel[k]=mv.sales.filter(function(m){return m.d>=ago90Str;}).reduce(function(a,m){return a+m.q;},0);
   });
 
@@ -795,6 +799,7 @@ function StockList(props) {
       slipDate: sl ? sl._d : null,
       realStock: realStock,
       sold3m: sold3mByModel[realKey]||0,
+      sold12: sold12ByModel[realKey]||0,
       displayCategory: esl ? (esl.category||p.category||"—") : (p.category||"—"),
       displayModelNo:  esl ? ((esl.systemModelNo||"").trim()||p.modelNo) : p.modelNo,
       parasutStock:    parasutStock,
@@ -806,6 +811,8 @@ function StockList(props) {
   var mergedByModel = {};
   enrichedProducts.forEach(function(p){
     if(p.realStock===null) return;
+    var cn = String(p.displayCategory||"").trim().toLocaleLowerCase("tr");
+    if(cn==="demirbaş"||cn==="fiyat farkı") return;
     var key = p.displayModelNo||p.modelNo;
     if(!mergedByModel[key]){
       mergedByModel[key] = Object.assign({},p,{_ids:[p.id],_allProducts:[p]});
@@ -817,15 +824,15 @@ function StockList(props) {
   });
 
   /* Sadece Paraşüt stoğu olan ürünleri göster (eşleştirilmiş olanlar) */
-  var cats=["Tümü"].concat(Array.from(new Set(
+  var cats=Array.from(new Set(
     Object.values(mergedByModel)
       .map(function(p){return p.displayCategory;}).filter(function(c){return c&&c!=="—";})
-  )));
+  )).sort();
 
   function stockStatus(p){
     var sold=p.sold3m||0; var stock=p.realStock||0;
     var ratio = sold>0 ? stock/sold : null;
-    var vel = ratio===null ? "∞" : ratio.toFixed(2)+"x ("+(ratio*3).toFixed(1)+" ay)";
+    var vel = ratio===null ? "—" : (ratio*3).toFixed(1)+" ay";
     var st;
     if(stock<=0 && sold===0) st={t:"Tükendi",cls:"bd_"};
     else if(stock<=0 || (ratio!==null && ratio<0.9)) st={t:"Sipariş",sty:{background:"#fef3c7",color:"#92400e"}};
@@ -837,9 +844,10 @@ function StockList(props) {
     if(stFilter!=="Tümü" && stockStatus(p).st.t!==stFilter) return false;
     var qq=q.toLowerCase();
     return(String(p.modelNo||"").toLowerCase().includes(qq)||String(p.skuId||"").toLowerCase().includes(qq)||String(p.displayModelNo||"").toLowerCase().includes(qq))
-      &&(cat==="Tümü"||p.displayCategory===cat);
+      &&(catSel.length===0||catSel.indexOf(p.displayCategory)>=0);
   }).sort(function(a,b){
-    return stockSort==="desc" ? (b.realStock||0)-(a.realStock||0) : (a.realStock||0)-(b.realStock||0);
+    var f = sortCol==="stock" ? "realStock" : "sold12";
+    return stockSort==="desc" ? (b[f]||0)-(a[f]||0) : (a[f]||0)-(b[f]||0);
   });
 
   function upd(id,ch){ props.onUpdateProduct(id, ch); setSel(function(prev){return prev&&prev.id===id?Object.assign({},prev,ch):prev;}); }
@@ -852,9 +860,22 @@ function StockList(props) {
             <i className="ti ti-search si" aria-hidden="true"/>
             <input placeholder="Model, SKU, EAN ara..." value={q} onChange={function(e){setQ(e.target.value);}}/>
           </div>
-          <select value={cat} onChange={function(e){setCat(e.target.value);}} style={{width:"auto",minWidth:120}}>
-            {cats.map(function(c){return <option key={c}>{c}</option>;})}
-          </select>
+          <div style={{position:"relative"}}>
+            <button className="btn" onClick={function(){setCatOpen(!catOpen);}}><i className="ti ti-filter" aria-hidden="true"/>Kategori{catSel.length>0?" ("+catSel.length+")":""}</button>
+            {catOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:50,background:"var(--bg)",border:".5px solid var(--bd2)",borderRadius:8,padding:8,minWidth:220,maxHeight:300,overflow:"auto",boxShadow:"0 4px 16px rgba(0,0,0,.15)"}}>
+              {cats.map(function(c){
+                var on=catSel.indexOf(c)>=0;
+                return <label key={c} style={{display:"flex",gap:8,alignItems:"center",padding:"4px 6px",cursor:"pointer",fontSize:13}}>
+                  <input type="checkbox" checked={on} style={{width:"auto"}} onChange={function(){setCatSel(on?catSel.filter(function(x){return x!==c;}):catSel.concat([c]));}}/>{c}
+                </label>;
+              })}
+              <div className="fxb" style={{marginTop:6}}>
+                <button className="btn bxs" onClick={function(){setCatSel([]);}}>Temizle</button>
+                <button className="btn bxs btnP" onClick={function(){setCatOpen(false);}}>Tamam</button>
+              </div>
+            </div>}
+          </div>
+          {catSel.map(function(c){return <span key={c} className="badge bi" style={{cursor:"pointer"}} onClick={function(){setCatSel(catSel.filter(function(x){return x!==c;}));}}>{c} ✕</span>;})}
           <select value={stFilter} onChange={function(e){setStFilter(e.target.value);}} style={{width:"auto",minWidth:120}} title="Duruma göre filtre">
             {["Tümü","Sipariş","Normal","Yavaş ürün","Tükendi"].map(function(c){return <option key={c} value={c}>{c==="Tümü"?"Tüm Durumlar":c}</option>;})}
           </select>
@@ -875,15 +896,18 @@ function StockList(props) {
           <th>Model No</th>
           <th>SKU ID</th>
           <th>Kategori</th>
-          <th style={{cursor:"pointer",userSelect:"none"}} onClick={function(){setStockSort(function(d){return d==="desc"?"asc":"desc";});}}>
-            Gerçek Stok <span style={{fontSize:9}}>{stockSort==="desc"?"▼":"▲"}</span>
+          <th style={{cursor:"pointer",userSelect:"none"}} onClick={function(){if(sortCol==="stock") setStockSort(function(d){return d==="desc"?"asc":"desc";}); else {setSortCol("stock");setStockSort("desc");}}}>
+            Gerçek Stok <span style={{fontSize:9}}>{sortCol==="stock"?(stockSort==="desc"?"▼":"▲"):""}</span>
           </th>
-          <th>Devir (stok / 3 ay satış)</th>
+          <th style={{cursor:"pointer",userSelect:"none"}} onClick={function(){if(sortCol==="sold12") setStockSort(function(d){return d==="desc"?"asc":"desc";}); else {setSortCol("sold12");setStockSort("desc");}}}>
+            Son 12 Ay Satış <span style={{fontSize:9}}>{sortCol==="sold12"?(stockSort==="desc"?"▼":"▲"):""}</span>
+          </th>
+          <th>Devir (ay)</th>
           <th>Durum</th>
           <th></th>
         </tr></thead>
         <tbody>
-          {filtered.length===0&&<tr><td colSpan={8}><div className="empty"><i className="ti ti-package"/><p>Ürün bulunamadı</p></div></td></tr>}
+          {filtered.length===0&&<tr><td colSpan={9}><div className="empty"><i className="ti ti-package"/><p>Ürün bulunamadı</p></div></td></tr>}
           {filtered.map(function(p){
             var stock = p.realStock||0;
             var sa = stockStatus(p); var sold=sa.sold; var vel=sa.vel; var st=sa.st;
@@ -898,6 +922,7 @@ function StockList(props) {
                 <strong style={{fontSize:15,color:stock<0?"var(--txD)":"inherit"}}>{stock}</strong> <span className="tc txs">ad</span>
                 <div style={{fontSize:10,color:"var(--tx3)"}}>{p.slipDate?("Sayım: "+p.slipDate):"Sayım yok"}</div>
               </td>
+              <td><strong>{(p.sold12||0).toLocaleString("tr")}</strong> <span className="tc txs">ad</span></td>
               <td><span className="ts">{vel}</span></td>
               <td><span className={"badge "+(st.cls||"")} style={st.sty}>{st.t}</span></td>
               <td><button className="btn bxs" onClick={function(e){e.stopPropagation();setSel(p);}}><i className="ti ti-eye" aria-hidden="true"/></button></td>
@@ -1073,8 +1098,8 @@ function normName(v){ return String(v||"").trim().replace(/\s+/g," ").toLocaleUp
 function loadParasutRows(){
   function post(b){return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}).then(function(r){return r.json();}).then(function(r){return r.ok?(r.data||[]):[];}).catch(function(){return [];});}
   return Promise.all([post({action:"getParasutSatislar"}),post({action:"get",sheet:"ParasutSatinAlma"}),post({action:"get",sheet:"ParasutEslestirme"})]).then(function(r){
-    var nameToModel={};
-    r[2].forEach(function(e){var pn=normName(e.parasutName),smn=normName(e.systemModelNo); if(pn&&smn) nameToModel[pn]=smn; if(smn) nameToModel[smn]=smn;});
+    var nameToModel={}; var modelLabel={};
+    r[2].forEach(function(e){var pn=normName(e.parasutName),smn=normName(e.systemModelNo); if(pn&&smn){ nameToModel[pn]=smn; modelLabel[smn]=String(e.systemModelNo).trim(); } if(smn){ nameToModel[smn]=smn; modelLabel[smn]=String(e.systemModelNo).trim(); } });
     var keyOf=function(n){var u=normName(n);return nameToModel[u]||u;};
     var purch={};
     r[1].forEach(function(p){var k=keyOf(p.productName),d=String(p.invoiceDate||"").slice(0,10),pr=Number(p.unitPrice)||0; if(!k||!d||pr<=0) return; (purch[k]=purch[k]||[]).push({d:d,p:pr});});
@@ -1082,7 +1107,7 @@ function loadParasutRows(){
     function costAt(k,d){var l=purch[k]; if(!l) return 0; var best=null; for(var i=0;i<l.length;i++){if(l[i].d<=d) best=l[i]; else break;} return (best||l[0]).p;}
     return r[0].map(function(s){
       var d=String(s.invoiceDate||"").slice(0,10), q=Number(s.qty)||0, p=Number(s.unitPrice)||0, c=costAt(keyOf(s.productName),d);
-      return {year:d.slice(0,4),contact:normName(s.contactName),contactName:String(s.contactName||""),qty:q,rev:p*q,cost:c*q,costedRev:c>0?p*q:0};
+      return {year:d.slice(0,4),contact:normName(s.contactName),contactName:String(s.contactName||""),product:modelLabel[keyOf(s.productName)]||String(s.productName||"—"),qty:q,rev:p*q,cost:c*q,costedRev:c>0?p*q:0};
     });
   });
 }
@@ -1170,24 +1195,22 @@ function Customers(props) {
         <div className="card">
           {sel?(<>
             <div className="ct fxb"><span><strong>{sel.name}</strong></span></div>
-            <div className="tabs">
-              {[["checks","Çekler"]].map(function(x){return <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>;})}
-            </div>
-            {tab==="quote"&&<>
-              <div className="infobox ibI mb3" style={{fontSize:11}}>Maliyet ÷ (1−%{sel.ciroPrimi}) ÷ (1−{sel.maturity}×%5) ÷ (1+%{sel.iskonto})</div>
-              <div className="tw"><table>
-                <thead><tr><th>Ürün</th><th>FIFO Maliyet</th><th>Teklif</th><th>Marj</th></tr></thead>
-                <tbody>{props.products.map(function(p){
-                  var pl=props.lots.filter(function(l){return l.productId===p.id;}).slice().sort(function(a,b){return new Date(a.entryDate)-new Date(b.entryDate);});
-                  if(!pl.length)return null;
-                  var cost=pl[0].cost; var price=calcPrice(cost,sel); var mg=((price-cost)/price*100).toFixed(1);
-                  var cls=+mg>20?"bs":+mg>10?"bw":"bd_";
-                  return(<tr key={p.id}><td style={{fontWeight:500}}>{p.modelNo}</td><td>₺{cost.toLocaleString("tr")}</td><td><strong>₺{Math.round(price).toLocaleString("tr")}</strong></td><td><span className={"badge "+cls}>%{mg}</span></td></tr>);
-                })}</tbody>
-              </table></div>
-            </>}
-            {tab==="risk"&&<CustomerRiskPanel customer={sel} sales={props.sales}/>}
-            {tab==="checks"&&<CustomerChecksPanel customer={sel} checks={props.checks} role={props.role} onAddCheck={props.onAddCheck} onUpdateCheck={props.onUpdateCheck}/>}
+            {(function(){
+              var key=normName(sel.name);
+              var rowsC=pRows.filter(function(r){return r.contact===key&&(ciroYear==="Tümü"||r.year===ciroYear);});
+              var g={}; rowsC.forEach(function(r){ if(!g[r.product]) g[r.product]={name:r.product,qty:0,rev:0}; g[r.product].qty+=r.qty; g[r.product].rev+=r.rev; });
+              var top=Object.values(g).sort(function(a,b){return b.rev-a.rev;}).slice(0,5);
+              return <div>
+                <div className="ct">En Çok Sattığı 5 Ürün {ciroYear!=="Tümü"&&<span className="tc txs">({ciroYear})</span>}</div>
+                <div className="tw"><table>
+                  <thead><tr><th>Ürün</th><th>Adet</th><th>Ciro</th></tr></thead>
+                  <tbody>
+                    {top.length===0&&<tr><td colSpan={3}><div className="empty" style={{padding:16}}><p>Satış yok</p></div></td></tr>}
+                    {top.map(function(t){return <tr key={t.name}><td style={{fontWeight:500}}>{t.name}</td><td>{t.qty.toLocaleString("tr")}</td><td>{fmtTL(t.rev)}</td></tr>;})}
+                  </tbody>
+                </table></div>
+              </div>;
+            })()}
           </>):<div className="empty"><i className="ti ti-user-check"/><p>Müşteri seçin</p></div>}
         </div>
       </div>
