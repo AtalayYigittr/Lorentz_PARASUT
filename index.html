@@ -1467,6 +1467,7 @@ function SellerPerformance(props) {
   var data = yr==="Tümü" ? rows : rows.filter(function(x){return x.year===yr;});
   var users=props.users.filter(function(u){return u.role!=="entry";});
   var list=users.map(function(u){return {id:String(u.id),name:u.name};}).concat([{id:"",name:"Atanmamış (sorumlu yok)"}]);
+  if(props.onlySeller) list=list.filter(function(u){return u.id===String(props.onlySeller);});
   var agg=list.map(function(u){
     var d=data.filter(function(x){return x.sellerId===u.id;});
     var qty=d.reduce(function(a,x){return a+x.qty;},0), rev=d.reduce(function(a,x){return a+x.rev;},0), cost=d.reduce(function(a,x){return a+x.cost;},0), cr=d.reduce(function(a,x){return a+x.costedRev;},0);
@@ -2264,7 +2265,7 @@ function UrunBazliRapor(p) {
 }
 
 /* ── SATIŞ RAPORLARI ── */
-function SatisRaporlari() {
+function SatisRaporlari(props) {
   var _loading=useState(true); var loading=_loading[0]; var setLoading=_loading[1];
   var _satislar=useState([]); var satislar=_satislar[0]; var setSatislar=_satislar[1];
   var _eslestirme=useState({}); var eslestirme=_eslestirme[0]; var setEslestirme=_eslestirme[1];
@@ -2412,6 +2413,7 @@ function SatisRaporlari() {
 
   /* Kategori filtreli enriched */
   var enrichedFiltered = enriched.filter(function(s){
+    if(props.onlySeller && s.sellerId!==String(props.onlySeller)) return false;
     if(catFilter!=="Tümü" && s.category!==catFilter) return false;
     if(sellerFilter==="__none__") return !s.sellerId;
     if(sellerFilter!=="Tümü") return s.sellerId===sellerFilter;
@@ -2734,13 +2736,13 @@ function SatisRaporlari() {
               {allCats.map(function(c){return <option key={c}>{c}</option>;})}
             </select>
           </div>
-          <div>
+          {!props.onlySeller&&<div>
             <label className="fl">Satıcı Filtresi</label>
             <select value={sellerFilter} onChange={function(e){setSellerFilter(e.target.value);}} style={{minWidth:140}}>
               <option value="Tümü">Tümü</option><option value="__none__">Atanmamış</option>
               {sellerOptions.map(function(id){return <option key={id} value={id}>{userName[id]||("#"+id)}</option>;})}
             </select>
-          </div>
+          </div>}
           <button className="btn bxs" onClick={exportAktifSekme} title="Aktif sekmeyi Excel/CSV olarak indir">
             <i className="ti ti-file-spreadsheet" aria-hidden="true"/>Excel İndir
           </button>
@@ -2765,7 +2767,7 @@ function SatisRaporlari() {
 
       {/* Sekme menüsü */}
       <div className="tabs">
-        {[["urun","Ürün Bazlı"],["musteri","Müşteri Bazlı"],["kategori","Kategori Bazlı"],["trend","Aylık Trend"],["karlilik_model","Model No Karlılık"],["karlilik_kat","Kategori Karlılık"],["aralik","Tarih Aralığı"],["satici","Satıcı Bazlı"]].map(function(x){return(
+        {[["urun","Ürün Bazlı"],["musteri","Müşteri Bazlı"],["kategori","Kategori Bazlı"],["trend","Aylık Trend"],["karlilik_model","Model No Karlılık"],["karlilik_kat","Kategori Karlılık"],["aralik","Tarih Aralığı"],["satici","Satıcı Bazlı"]].filter(function(x){return !(props.onlySeller&&x[0]==="satici");}).map(function(x){return(
           <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>
         );})}
       </div>
@@ -4223,16 +4225,19 @@ function App() {
 
   var rl={admin:"Yönetici",seller:"Satıcı",entry:"Veri Girişi"};
   var NAV=[
-    {id:"dashboard",ico:"ti-dashboard",lbl:"Genel Durum",roles:["admin","seller","entry"]},
-    {id:"stock",ico:"ti-package",lbl:"Stok Listesi",roles:["admin","seller","entry"]},
+    {id:"dashboard",ico:"ti-dashboard",lbl:"Genel Durum",roles:["admin","entry"]},
+    {id:"stock",ico:"ti-package",lbl:"Stok Listesi",roles:["admin","entry"]},
     {id:"customers",ico:"ti-users",lbl:"Müşteriler",roles:["admin","seller"]},
     {id:"raporlar",ico:"ti-report-analytics",lbl:"Satış Raporları",roles:["admin","seller"]},
-    {id:"satin_alma",ico:"ti-shopping-cart",lbl:"Satın Alma Geçmişi",roles:["admin","seller"]},
-    {id:"sellers",ico:"ti-chart-bar",lbl:"Satıcı Performansı",roles:["admin"]},
+    {id:"satin_alma",ico:"ti-shopping-cart",lbl:"Satın Alma Geçmişi",roles:["admin"]},
+    {id:"sellers",ico:"ti-chart-bar",lbl:"Satıcı Performansı",roles:["admin","seller"]},
     {id:"eslestirme",ico:"ti-link",lbl:"Ürün Eşleştirme",roles:["admin"]},
     {id:"users",ico:"ti-user-cog",lbl:"Kullanıcılar",roles:["admin"]},
     {id:"integrations",ico:"ti-cloud",lbl:"Entegrasyonlar",roles:["admin"]}
   ].filter(function(n){return n.roles.indexOf(user.role)>=0;});
+  var pageAllowed = NAV.some(function(n){return n.id===page;});
+  var curPage = pageAllowed ? page : (NAV[0]?NAV[0].id:"dashboard");
+  var onlySeller = user.role==="seller" ? String(user.id) : null;
   var TITLES={dashboard:"Genel Durum",stock:"Stok Listesi",customers:"Müşteriler & Teklif",payments:"Ödeme & Vade Takibi",raporlar:"Satış Raporları",satin_alma:"Satın Alma Geçmişi",sellers:"Satıcı Performansı",sku:"SKU Eşitleme",eslestirme:"Paraşüt Ürün Eşleştirme",users:"Kullanıcı Yönetimi",integrations:"Entegrasyonlar"};
 
   var overdueSalesCount = sales.filter(function(s){
@@ -4358,7 +4363,7 @@ function App() {
         <div className="sb-logo"><h2>StokYönet</h2><small>Stok Yönetim Sistemi</small></div>
         <div className="nav-sec">Menü</div>
         {NAV.map(function(n){return(
-          <button key={n.id} className={"nav-btn"+(page===n.id?" on":"")} onClick={function(){setPage(n.id);setMobOpen(false);}} title={n.lbl}>
+          <button key={n.id} className={"nav-btn"+(curPage===n.id?" on":"")} onClick={function(){setPage(n.id);setMobOpen(false);}} title={n.lbl}>
             <i className={"ti "+n.ico} aria-hidden="true"/><span>{n.lbl}</span>
             {n.id==="payments"&&totalAlerts>0&&<span className="badge bd_" style={{marginLeft:"auto",fontSize:10}}>{totalAlerts}</span>}
           </button>
@@ -4379,7 +4384,7 @@ function App() {
         <div className="topbar">
           <div className="fx g2g" style={{minWidth:0}}>
             <button className="btn bsm" title="Menüyü aç/kapat" onClick={toggleMenu} style={{padding:"6px 9px"}}><i className="ti ti-menu-2" aria-hidden="true"/></button>
-            <h1>{TITLES[page]}</h1>
+            <h1>{TITLES[curPage]}</h1>
           </div>
           <div className="fx g2g">
             {(user.role==="admin"||user.role==="seller")&&<button className="btn btnP bsm" onClick={function(){setShowAO(true);}}><i className="ti ti-plus" aria-hidden="true"/>Yeni Sipariş</button>}
@@ -4391,16 +4396,16 @@ function App() {
           {loading&&<div className="empty" style={{padding:60}}><i className="ti ti-refresh spin"/><p>Veriler yükleniyor...</p></div>}
           {!loading&&loadErr&&<div className="infobox ibW">{loadErr} <button className="btn bxs" onClick={loadAll} style={{marginLeft:8}}>Tekrar Dene</button></div>}
           {!loading&&!loadErr&&<>
-            {page==="dashboard"&&<Dashboard products={products} lots={lots} sales={sales} customers={customers}/>}
-            {page==="stock"&&<StockList products={products} setProducts={setProducts} lots={lots} sales={sales} role={user.role} onAddProduct={function(){setShowAP(true);}} onAddLot={function(){setShowAL(true);}} onUpdateProduct={updateProduct} eslestirme={eslestirme} parasutSatislar={parasutSatislar} parasutUrunler={parasutUrunler} userName={user.name}/>}
-            {page==="customers"&&<Customers users={allUsers} customers={customers} setCustomers={setCustomers} products={products} lots={lots} sales={sales} checks={checks} setChecks={setChecks} role={user.role} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onAddCheck={addCheck} onUpdateCheck={updateCheck}/>}
-            {page==="raporlar"&&<SatisRaporlari/>}
-            {page==="satin_alma"&&<SatinAlmaGecmisi/>}
-            {page==="sellers"&&<SellerPerformance users={allUsers} sales={sales} customers={customers}/>}
-            {page==="sku"&&<SkuMap products={products} skuMap={skuMap} setSkuMap={setSkuMap} role={user.role} onAdd={addSkuMapping} onDelete={deleteSkuMapping}/>}
-            {page==="eslestirme"&&<EslestirmeEkrani/>}
-            {page==="users"&&<Users users={allUsers} cur={user} onAdd={addUser} onDelete={deleteUser}/>}
-            {page==="integrations"&&<Integrations/>}
+            {curPage==="dashboard"&&<Dashboard products={products} lots={lots} sales={sales} customers={customers}/>}
+            {curPage==="stock"&&<StockList products={products} setProducts={setProducts} lots={lots} sales={sales} role={user.role} onAddProduct={function(){setShowAP(true);}} onAddLot={function(){setShowAL(true);}} onUpdateProduct={updateProduct} eslestirme={eslestirme} parasutSatislar={parasutSatislar} parasutUrunler={parasutUrunler} userName={user.name}/>}
+            {curPage==="customers"&&<Customers users={allUsers} customers={onlySeller?customers.filter(function(c){return String(c.sellerId)===onlySeller;}):customers} setCustomers={setCustomers} products={products} lots={lots} sales={sales} checks={checks} setChecks={setChecks} role={user.role} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onAddCheck={addCheck} onUpdateCheck={updateCheck}/>}
+            {curPage==="raporlar"&&<SatisRaporlari onlySeller={onlySeller}/>}
+            {curPage==="satin_alma"&&<SatinAlmaGecmisi/>}
+            {curPage==="sellers"&&<SellerPerformance onlySeller={onlySeller} users={allUsers} sales={sales} customers={customers}/>}
+            {curPage==="sku"&&<SkuMap products={products} skuMap={skuMap} setSkuMap={setSkuMap} role={user.role} onAdd={addSkuMapping} onDelete={deleteSkuMapping}/>}
+            {curPage==="eslestirme"&&<EslestirmeEkrani/>}
+            {curPage==="users"&&<Users users={allUsers} cur={user} onAdd={addUser} onDelete={deleteUser}/>}
+            {curPage==="integrations"&&<Integrations/>}
           </>}
         </div>
       </main>
