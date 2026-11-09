@@ -96,7 +96,30 @@ input[type=checkbox]{width:auto}
 .av{width:28px;height:28px;border-radius:50%;background:var(--bgI);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--txI);flex-shrink:0}
 @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 .spin{animation:spin 1s linear infinite;display:inline-block}
-@media(max-width:700px){.sb{width:52px;min-width:52px}.sb-logo small,.nav-btn span,.nav-sec,.uinfo,.sb-logo h2{display:none}.nav-btn{justify-content:center;padding:12px}.uch{justify-content:center;padding:8px}}
+:root{--cpad:20px}
+.sb{transition:width .2s,min-width .2s}
+.stk{position:sticky;top:8px;align-self:start;max-height:calc(100vh - 100px);overflow:auto}
+.sb-ov{display:none}
+@media(min-width:701px){
+  .sb.col{width:52px;min-width:52px}
+  .sb.col .sb-logo small,.sb.col .nav-btn span,.sb.col .nav-sec,.sb.col .uinfo,.sb.col .sb-logo h2{display:none}
+  .sb.col .nav-btn{justify-content:center;padding:12px}
+  .sb.col .uch{justify-content:center;padding:8px}
+}
+@media(max-width:900px){.stk{position:static;max-height:none}.g3{grid-template-columns:1fr}}
+@media(max-width:700px){
+  :root{--cpad:12px}
+  .app{position:relative}
+  .sb{position:fixed;left:0;top:0;bottom:0;z-index:300;width:250px;min-width:250px;transform:translateX(-100%);transition:transform .2s;box-shadow:2px 0 16px rgba(0,0,0,.25)}
+  .sb.open{transform:none}
+  .sb-ov.show{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:250}
+  .content{padding:12px}
+  .topbar{padding:8px 12px;gap:8px;flex-wrap:wrap}
+  .card{padding:12px;margin-bottom:12px}
+  .g4{grid-template-columns:1fr 1fr}
+  .modal{padding:16px;width:100%!important}
+  .sc .val{font-size:18px}
+}
 </style>
 </head>
 <body>
@@ -470,7 +493,7 @@ function Dashboard(props) {
     var pct = m.cost>0 ? (m.rev/m.cost-1)*100 : 0;
     return { key:k, label:monthLabel(k), cost:m.cost, rev:m.rev, profit:m.rev-m.cost, pct:pct, qty:m.qty };
   });
-  if(inv) monthlyProfit = inv.monthly;
+  if(inv) monthlyProfit = inv.monthly.slice().reverse();
   var maxAbsProfit = Math.max(1, Math.max.apply(null, monthlyProfit.map(function(m){return Math.abs(m.profit);})));
 
   /* Aylık açık hesaptan gelecek ödemeler: vade tarihine (dueDateOf) göre YYYY-MM grupla */
@@ -854,7 +877,7 @@ function StockList(props) {
 
   return (
     <div>
-      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap",position:"sticky",top:-20,zIndex:30,background:"var(--bg3)",padding:"12px 0 8px",marginTop:-12}}>
+      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap",position:"sticky",top:"calc(-1 * var(--cpad))",zIndex:30,background:"var(--bg3)",padding:"12px 0 8px",marginTop:-12}}>
         <div className="fx g2g" style={{flex:1,minWidth:200}}>
           <div className="swrap" style={{flex:1,maxWidth:340}}>
             <i className="ti ti-search si" aria-hidden="true"/>
@@ -1114,6 +1137,7 @@ function loadParasutRows(){
 
 function Customers(props) {
   var _s=useState(null); var sel=_s[0]; var setSel=_s[1];
+  useEffect(function(){ if(sel && window.innerWidth<=900){ var el=document.getElementById("custPanel"); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); } },[sel]);
   var _sh=useState(false); var showAdd=_sh[0]; var setShowAdd=_sh[1];
   var _se=useState(null); var edit=_se[0]; var setEdit=_se[1];
   var _f=useState({name:"",maturity:1,ciroPrimi:0,iskonto:0,riskLimit:1000000}); var fm=_f[0]; var setFm=_f[1];
@@ -1192,7 +1216,7 @@ function Customers(props) {
             );})}
           </tbody></table></div>
         </div>
-        <div className="card">
+        <div className="card stk" id="custPanel">
           {sel?(<>
             <div className="ct fxb"><span><strong>{sel.name}</strong></span></div>
             {(function(){
@@ -3245,7 +3269,7 @@ function EslestirmeEkrani() {
       </div>
 
       {/* Araç çubuğu */}
-      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap",position:"sticky",top:-20,zIndex:30,background:"var(--bg3)",padding:"12px 0 8px",marginTop:-12}}>
+      <div className="fxb mb3" style={{gap:8,flexWrap:"wrap",position:"sticky",top:"calc(-1 * var(--cpad))",zIndex:30,background:"var(--bg3)",padding:"12px 0 8px",marginTop:-12}}>
         <div className="fx g2g" style={{flex:1,flexWrap:"wrap"}}>
           <div className="swrap" style={{minWidth:220}}>
             <i className="ti ti-search si" aria-hidden="true"/>
@@ -4135,6 +4159,12 @@ function Users(props) {
 function App() {
   var _u=useState(null); var user=_u[0]; var setUser=_u[1];
   var _pg=useState("dashboard"); var page=_pg[0]; var setPage=_pg[1];
+  var _col=useState(function(){try{return localStorage.getItem("sbCol")==="1";}catch(e){return false;}}); var sbCol=_col[0]; var setSbCol=_col[1];
+  var _mo=useState(false); var mobOpen=_mo[0]; var setMobOpen=_mo[1];
+  function toggleMenu(){
+    if(window.innerWidth<=700){ setMobOpen(!mobOpen); }
+    else { var v=!sbCol; setSbCol(v); try{localStorage.setItem("sbCol",v?"1":"0");}catch(e){} }
+  }
 
   var _loading=useState(true); var loading=_loading[0]; var setLoading=_loading[1];
   var _loadErr=useState(null); var loadErr=_loadErr[0]; var setLoadErr=_loadErr[1];
@@ -4323,11 +4353,12 @@ function App() {
 
   return (
     <div className="app">
-      <nav className="sb">
+      <div className={"sb-ov"+(mobOpen?" show":"")} onClick={function(){setMobOpen(false);}}/>
+      <nav className={"sb"+(sbCol?" col":"")+(mobOpen?" open":"")}>
         <div className="sb-logo"><h2>StokYönet</h2><small>Stok Yönetim Sistemi</small></div>
         <div className="nav-sec">Menü</div>
         {NAV.map(function(n){return(
-          <button key={n.id} className={"nav-btn"+(page===n.id?" on":"")} onClick={function(){setPage(n.id);}}>
+          <button key={n.id} className={"nav-btn"+(page===n.id?" on":"")} onClick={function(){setPage(n.id);setMobOpen(false);}} title={n.lbl}>
             <i className={"ti "+n.ico} aria-hidden="true"/><span>{n.lbl}</span>
             {n.id==="payments"&&totalAlerts>0&&<span className="badge bd_" style={{marginLeft:"auto",fontSize:10}}>{totalAlerts}</span>}
           </button>
@@ -4346,7 +4377,10 @@ function App() {
       </nav>
       <main className="main">
         <div className="topbar">
-          <h1>{TITLES[page]}</h1>
+          <div className="fx g2g" style={{minWidth:0}}>
+            <button className="btn bsm" title="Menüyü aç/kapat" onClick={toggleMenu} style={{padding:"6px 9px"}}><i className="ti ti-menu-2" aria-hidden="true"/></button>
+            <h1>{TITLES[page]}</h1>
+          </div>
           <div className="fx g2g">
             {(user.role==="admin"||user.role==="seller")&&<button className="btn btnP bsm" onClick={function(){setShowAO(true);}}><i className="ti ti-plus" aria-hidden="true"/>Yeni Sipariş</button>}
             <button className="btn bsm" title="Verileri yenile" onClick={loadAll}><i className={"ti ti-refresh"+(loading?" spin":"")} aria-hidden="true"/></button>
