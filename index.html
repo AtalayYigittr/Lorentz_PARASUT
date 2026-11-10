@@ -393,7 +393,7 @@ function Login(props) {
 
 /* ── DASHBOARD ── */
 /* ── GENEL DURUM: Paraşüt hareketlerinden gerçek stok / aktif SKU / sipariş / aylık karlılık ── */
-function buildInventory(satislar, alim, esl, slips, maliyet){
+function buildInventory(satislar, alim, esl, slips, cfg){
   var nameToModel={};
   esl.forEach(function(e){
     var pn=String(e.parasutName||"").trim().replace(/\s+/g," ").toUpperCase();
@@ -412,7 +412,7 @@ function buildInventory(satislar, alim, esl, slips, maliyet){
     var k=keyOf(r.productName); if(!k) return;
     var d=String(r.invoiceDate||"").slice(0,10); if(!d) return;
     if(!mv[k]) mv[k]={sales:[],purch:[]};
-    mv[k][kind].push({d:d,q:Number(r.qty)||0,p:Number(r.unitPrice)||0});
+    mv[k][kind].push({d:d,q:Number(r.qty)||0,p:Number(r.unitPrice)||0,r:isRefund(r),ok:kind==="purch"?costRowOK(r,cfg.modes):true});
     if(kind==="sales"&&d>maxSale) maxSale=d;
   });}
   add(satislar,"sales"); add(alim,"purch");
@@ -421,7 +421,8 @@ function buildInventory(satislar, alim, esl, slips, maliyet){
   var cut90=new Date(now-90*864e5).toISOString().slice(0,10);
   Object.keys(mv).forEach(function(k){mv[k].purch.sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:0;});});
   function costAt(k,d){
-    var list=(mv[k]||{}).purch||[]; var pl=list.filter(function(x){return x.p>0;});
+    var mo=cfg.manual[normName(k)]; if(mo>0) return mo;
+    var list=(mv[k]||{}).purch||[]; var pl=list.filter(function(x){return x.p>0&&x.ok;});
     if(!pl.length) return 0; var best=null;
     for(var i=0;i<pl.length;i++){ if(pl[i].d<=d) best=pl[i]; else break; }
     return (best||pl[0]).p;
@@ -431,7 +432,7 @@ function buildInventory(satislar, alim, esl, slips, maliyet){
   Object.keys(keys).forEach(function(k){
     var m=mv[k]||{sales:[],purch:[]}; var sl=latest[k]; var cutoff=sl?sl.d:"";
     var stock=sl?sl.q:0;
-    m.purch.forEach(function(x){if(x.d>cutoff) stock+=x.q;});
+    m.purch.forEach(function(x){if(x.d>cutoff) stock+=(x.r?-x.q:x.q);});
     m.sales.forEach(function(x){if(x.d>cutoff) stock-=x.q;});
     totalStock+=Math.max(0,stock);
     var active=m.sales.concat(m.purch).some(function(x){return x.d>=cut2y;});
@@ -469,8 +470,8 @@ function Dashboard(props) {
   var _inv=useState(null); var inv=_inv[0]; var setInv=_inv[1];
   useEffect(function(){
     function post(b){return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}).then(function(r){return r.json();}).then(function(r){return r.ok?(r.data||[]):[];}).catch(function(){return [];});}
-    Promise.all([post({action:"getParasutSatislar"}),post({action:"get",sheet:"ParasutSatinAlma"}),post({action:"get",sheet:"ParasutEslestirme"}),post({action:"getStokSayim"})])
-      .then(function(r){ setInv(buildInventory(r[0],r[1],r[2],r[3])); });
+    Promise.all([post({action:"getParasutSatislar"}),post({action:"get",sheet:"ParasutSatinAlma"}),post({action:"get",sheet:"ParasutEslestirme"}),post({action:"getStokSayim"}),loadCostConfig()])
+      .then(function(r){ setInv(buildInventory(r[0],r[1],r[2],r[3],r[4])); });
   },[]);
   var totalStock = lots.reduce(function(a,l){return a+l.remaining;},0);
   var totalVal   = lots.reduce(function(a,l){return a+l.remaining*l.cost;},0);
@@ -787,7 +788,7 @@ function StockList(props) {
       var d=String(r.invoiceDate||"").slice(0,10);
       var q=Number(r.qty)||0;
       if(!movesByModel[k]) movesByModel[k]={sales:[],purch:[]};
-      movesByModel[k][kind].push({d:d,q:q});
+      movesByModel[k][kind].push({d:d,q:q,r:isRefund(r)});
     });
   }
   addMove(props.parasutSatislar||[], "sales");
@@ -802,7 +803,7 @@ function StockList(props) {
     var sl=latestSlip[k]; var mv=movesByModel[k]||{sales:[],purch:[]};
     var cutoff = sl ? sl._d : "";
     var stock = sl ? Number(sl.countedQty)||0 : 0;
-    mv.purch.forEach(function(m){ if(m.d>cutoff) stock+=m.q; });
+    mv.purch.forEach(function(m){ if(m.d>cutoff) stock+=(m.r?-m.q:m.q); });
     mv.sales.forEach(function(m){ if(m.d>cutoff) stock-=m.q; });
     realByModel[k]=stock;
     sold12ByModel[k]=mv.sales.filter(function(m){return m.d>=ago365Str;}).reduce(function(a,m){return a+m.q;},0);
@@ -1117,17 +1118,35 @@ function AddLot(props) {
 
 /* ── MÜŞTERİLER ── */
 /* ── Paraşüt satırları: müşteri adı + yıl + ciro + (satış tarihinden önceki son alım) maliyet ── */
+function isRefund(r){ return String(r&&r.itemType||"").toLowerCase()==="refund"; }
+/* Cari (tedarikçi) maliyet ayarı: purchase_only (varsayılan) | all | exclude */
+function costRowOK(row, modes){
+  var m=(modes||{})[normName(row&&row.contactName)]||"purchase_only";
+  if(m==="exclude") return false;
+  if(m==="purchase_only") return !isRefund(row);
+  return true;
+}
+function loadCostConfig(){
+  function post(b){return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}).then(function(r){return r.json();}).then(function(r){return r.ok?(r.data||[]):[];}).catch(function(){return [];});}
+  return Promise.all([post({action:"getTedarikciAyar"}),post({action:"getManuelMaliyet"})]).then(function(r){
+    var modes={}, manual={};
+    r[0].forEach(function(a){ if(a.supplier) modes[normName(a.supplier)]=String(a.mode||"purchase_only"); });
+    r[1].forEach(function(m){ var c=Number(m.unitCost)||0; if(m.modelNo&&c>0) manual[normName(m.modelNo)]=c; });
+    return {modes:modes,manual:manual,rawModes:r[0],rawManual:r[1]};
+  });
+}
 function normName(v){ return String(v||"").trim().replace(/\s+/g," ").toLocaleUpperCase("tr").replace(/İ/g,"I"); }
 function loadParasutRows(){
   function post(b){return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)}).then(function(r){return r.json();}).then(function(r){return r.ok?(r.data||[]):[];}).catch(function(){return [];});}
-  return Promise.all([post({action:"getParasutSatislar"}),post({action:"get",sheet:"ParasutSatinAlma"}),post({action:"get",sheet:"ParasutEslestirme"})]).then(function(r){
+  return Promise.all([post({action:"getParasutSatislar"}),post({action:"get",sheet:"ParasutSatinAlma"}),post({action:"get",sheet:"ParasutEslestirme"}),loadCostConfig()]).then(function(r){
+    var cfg=r[3];
     var nameToModel={}; var modelLabel={};
     r[2].forEach(function(e){var pn=normName(e.parasutName),smn=normName(e.systemModelNo); if(pn&&smn){ nameToModel[pn]=smn; modelLabel[smn]=String(e.systemModelNo).trim(); } if(smn){ nameToModel[smn]=smn; modelLabel[smn]=String(e.systemModelNo).trim(); } });
     var keyOf=function(n){var u=normName(n);return nameToModel[u]||u;};
     var purch={};
-    r[1].forEach(function(p){var k=keyOf(p.productName),d=String(p.invoiceDate||"").slice(0,10),pr=Number(p.unitPrice)||0; if(!k||!d||pr<=0) return; (purch[k]=purch[k]||[]).push({d:d,p:pr});});
+    r[1].forEach(function(p){if(!costRowOK(p,cfg.modes)) return; var k=keyOf(p.productName),d=String(p.invoiceDate||"").slice(0,10),pr=Number(p.unitPrice)||0; if(!k||!d||pr<=0) return; (purch[k]=purch[k]||[]).push({d:d,p:pr});});
     Object.keys(purch).forEach(function(k){purch[k].sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:0;});});
-    function costAt(k,d){var l=purch[k]; if(!l) return 0; var best=null; for(var i=0;i<l.length;i++){if(l[i].d<=d) best=l[i]; else break;} return (best||l[0]).p;}
+    function costAt(k,d){ if(cfg.manual[k]>0) return cfg.manual[k]; var l=purch[k]; if(!l) return 0; var best=null; for(var i=0;i<l.length;i++){if(l[i].d<=d) best=l[i]; else break;} return (best||l[0]).p;}
     return r[0].map(function(s){
       var d=String(s.invoiceDate||"").slice(0,10), q=Number(s.qty)||0, p=Number(s.unitPrice)||0, c=costAt(keyOf(s.productName),d);
       return {year:d.slice(0,4),contact:normName(s.contactName),contactName:String(s.contactName||""),product:modelLabel[keyOf(s.productName)]||String(s.productName||"—"),qty:q,rev:p*q,cost:c*q,costedRev:c>0?p*q:0};
@@ -2283,6 +2302,11 @@ function SatisRaporlari(props) {
   var _custL=useState([]); var custList=_custL[0]; var setCustList=_custL[1];
   var _userL=useState([]); var userList=_userL[0]; var setUserList=_userL[1];
   var _sellF=useState("Tümü"); var sellerFilter=_sellF[0]; var setSellerFilter=_sellF[1];
+  var _cc=useState({modes:{},manual:{}}); var costCfg=_cc[0]; var setCostCfg=_cc[1];
+  useEffect(function(){ loadCostConfig().then(setCostCfg); },[]);
+  var _dm=useState(""); var dModel=_dm[0]; var setDModel=_dm[1];
+  var _dc=useState(""); var dCust=_dc[0]; var setDCust=_dc[1];
+  var _dy=useState(""); var dYear=_dy[0]; var setDYear=_dy[1];
   /* Alım geçmişi: Paraşüt satın alma satırları (tarih bazlı son alım fiyatı için) */
   var _pur=useState([]); var purchases=_pur[0]; var setPurchases=_pur[1];
 
@@ -2348,6 +2372,7 @@ function SatisRaporlari(props) {
   /* Model bazlı alım geçmişi: modelKey(UPPER) → [{d:"YYYY-MM-DD", p:birim fiyat}] tarihe göre artan */
   var purchByModel = {};
   purchases.forEach(function(pu){
+    if(!costRowOK(pu,costCfg.modes)) return;
     var nm = String(pu.productName||"").trim().replace(/\s+/g," ");
     var e = eslestirme[nm] || eslestirme[nm.toUpperCase()] || {};
     var key = (String(e.systemModelNo||"").trim() || nm).toUpperCase();
@@ -2358,8 +2383,27 @@ function SatisRaporlari(props) {
     purchByModel[key].push({d:d,p:price});
   });
   Object.keys(purchByModel).forEach(function(k){ purchByModel[k].sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:0;}); });
+  /* Hangi alım kaydının kullanıldığını döndürür (detay ekranı için) */
+  function manualFor(keys){
+    for(var i=0;i<keys.length;i++){ var m=costCfg.manual[normName(keys[i])]; if(m>0) return m; }
+    return 0;
+  }
+  function costInfo(keys, saleDate){
+    var mc = manualFor(keys); if(mc>0) return {p:mc,d:"manuel",fb:false};
+    var d = String(saleDate||"").slice(0,10);
+    for(var i=0;i<keys.length;i++){
+      var list = purchByModel[String(keys[i]).toUpperCase()];
+      if(!list) continue;
+      var best = null;
+      for(var j=0;j<list.length;j++){ if(list[j].d<=d) best=list[j]; else break; }
+      if(best) return {p:best.p,d:best.d,fb:false};
+      return {p:list[0].p,d:list[0].d,fb:true};
+    }
+    return null;
+  }
   /* Satış tarihinden önceki (aynı gün dahil) en son alım fiyatı */
   function costAt(keys, saleDate){
+    var mc = manualFor(keys); if(mc>0) return mc;
     var d = String(saleDate||"").slice(0,10);
     for(var i=0;i<keys.length;i++){
       var list = purchByModel[String(keys[i]).toUpperCase()];
@@ -2767,7 +2811,7 @@ function SatisRaporlari(props) {
 
       {/* Sekme menüsü */}
       <div className="tabs">
-        {[["urun","Ürün Bazlı"],["musteri","Müşteri Bazlı"],["kategori","Kategori Bazlı"],["trend","Aylık Trend"],["karlilik_model","Model No Karlılık"],["karlilik_kat","Kategori Karlılık"],["aralik","Tarih Aralığı"],["satici","Satıcı Bazlı"]].filter(function(x){return !(props.onlySeller&&x[0]==="satici");}).map(function(x){return(
+        {[["urun","Ürün Bazlı"],["musteri","Müşteri Bazlı"],["kategori","Kategori Bazlı"],["trend","Aylık Trend"],["karlilik_model","Model No Karlılık"],["karlilik_kat","Kategori Karlılık"],["aralik","Tarih Aralığı"],["satici","Satıcı Bazlı"],["detay","Karlılık Detayı"]].filter(function(x){return !(props.onlySeller&&x[0]==="satici");}).map(function(x){return(
           <button key={x[0]} className={"tab"+(tab===x[0]?" on":"")} onClick={function(){setTab(x[0]);}}>{x[1]}</button>
         );})}
       </div>
@@ -2927,6 +2971,69 @@ function SatisRaporlari(props) {
 
       {/* KATEGORİ BAZLI KARLILIK */}
       {/* SATICI BAZLI */}
+      {/* KARLILIK DETAYI */}
+      {tab==="detay"&&(function(){
+        var yr = dYear || yilA;
+        var mUp = dModel.trim().toUpperCase();
+        var cq = dCust.trim().toUpperCase();
+        var modelNames = Array.from(new Set(enriched.map(function(s){return s.displayName;}))).sort();
+        var rowsS = !mUp ? [] : enriched.filter(function(s){
+          return String(s.displayName).toUpperCase()===mUp && s.year===yr && (!cq || String(s.contactName||"").toUpperCase().indexOf(cq)>=0);
+        }).sort(function(a,b){return String(a.invoiceDate)<String(b.invoiceDate)?-1:1;});
+        var tot={rev:0,cost:0,costedRev:0,qty:0};
+        rowsS.forEach(function(s){var q=Number(s.qty)||0; tot.qty+=q; tot.rev+=s.revenue; if(s.unitCost>0){tot.cost+=s.unitCost*q; tot.costedRev+=s.revenue;}});
+        var rowsP = !mUp ? [] : purchases.filter(function(pu){
+          var nm=String(pu.productName||"").trim().replace(/\s+/g," ");
+          var e=eslestirme[nm]||eslestirme[nm.toUpperCase()]||{};
+          var key=(String(e.systemModelNo||"").trim()||nm).toUpperCase();
+          var y=String(pu.invoiceDate||"").slice(0,4);
+          return key===mUp && Number(y)<=Number(yr);
+        }).sort(function(a,b){return String(a.invoiceDate)<String(b.invoiceDate)?-1:1;});
+        return <div>
+          <div className="card">
+            <div className="fx g2g" style={{flexWrap:"wrap",alignItems:"flex-end"}}>
+              <div className="fg" style={{marginBottom:0}}><label className="fl">Model No</label>
+                <input list="detModels" value={dModel} onChange={function(e){setDModel(e.target.value);}} placeholder="örn. R6L4F"/>
+                <datalist id="detModels">{modelNames.map(function(m){return <option key={m} value={m}/>;})}</datalist></div>
+              <div className="fg" style={{marginBottom:0}}><label className="fl">Müşteri (içerir)</label>
+                <input value={dCust} onChange={function(e){setDCust(e.target.value);}} placeholder="örn. katırcı"/></div>
+              <div className="fg" style={{marginBottom:0}}><label className="fl">Yıl</label>
+                <select value={yr} onChange={function(e){setDYear(e.target.value);}}>{years.map(function(y){return <option key={y}>{y}</option>;})}</select></div>
+            </div>
+          </div>
+          {!mUp&&<div className="infobox ibI">Model No yazın; satışlar, uygulanan maliyet ve alımlar listelenir.</div>}
+          {mUp&&<>
+            <div className="card" style={{padding:0}}>
+              <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Satışlar ({rowsS.length}) — adet {tot.qty.toLocaleString("tr")} · ciro {fmtTL(tot.rev)} · maliyet {fmtTL(tot.cost)} · karlılık {tot.cost>0?"%"+((tot.costedRev/tot.cost-1)*100).toFixed(1):"—"}</div>
+              <div className="tw"><table>
+                <thead><tr><th>Tarih</th><th>Fatura</th><th>Müşteri</th><th>Adet</th><th>Satış Fiyatı</th><th>Kullanılan Maliyet</th><th>Maliyet Alım Tarihi</th><th>Karlılık</th></tr></thead>
+                <tbody>
+                  {rowsS.length===0&&<tr><td colSpan={8}><div className="empty" style={{padding:16}}><p>Satış bulunamadı</p></div></td></tr>}
+                  {rowsS.map(function(s,i){
+                    var ci=costInfo([s.displayName,String(s.productName||"").trim().replace(/\s+/g," ")],s.invoiceDate);
+                    return <tr key={i}><td>{String(s.invoiceDate).slice(0,10)}</td><td>{s.invoiceNo}</td><td>{s.contactName}</td><td>{s.qty}</td>
+                      <td>{fmtTL(Number(s.unitPrice)||0)}</td><td>{s.unitCost>0?fmtTL(s.unitCost):"—"}</td>
+                      <td>{ci?ci.d:"—"}{ci&&ci.fb&&<span className="badge bw" style={{marginLeft:6}}>satıştan önce alım yok</span>}</td>
+                      <td>{s.profit!==null?"%"+s.profit.toFixed(1):"—"}</td></tr>;
+                  })}
+                </tbody>
+              </table></div>
+            </div>
+            <div className="card" style={{padding:0}}>
+              <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>Satınalmalar — {yr} ve öncesi ({rowsP.length}) · fiyatlar TL</div>
+              <div className="tw"><table>
+                <thead><tr><th>Tarih</th><th>Fatura</th><th>Tedarikçi</th><th>Adet</th><th>Birim Fiyat (TL)</th><th>Tür</th><th>Para Birimi</th><th>Kur</th><th>Orijinal Fiyat</th></tr></thead>
+                <tbody>
+                  {rowsP.length===0&&<tr><td colSpan={9}><div className="empty" style={{padding:16}}><p>Satınalma bulunamadı</p></div></td></tr>}
+                  {rowsP.map(function(pu,i){return <tr key={i}><td>{String(pu.invoiceDate).slice(0,10)}</td><td>{pu.invoiceNo}</td><td>{pu.contactName}</td><td>{pu.qty}</td>
+                    <td>{fmtTL(Number(pu.unitPrice)||0)}</td><td>{isRefund(pu)?<span className="badge bd_">İade</span>:<span className="badge bs">Alım</span>}</td><td>{pu.currency||"TRL"}</td><td>{pu.exchangeRate===undefined||pu.exchangeRate===""?"—":pu.exchangeRate}</td><td>{pu.unitPriceOrig===undefined||pu.unitPriceOrig===""?"—":pu.unitPriceOrig}</td></tr>;})}
+                </tbody>
+              </table></div>
+            </div>
+          </>}
+        </div>;
+      })()}
+
       {tab==="satici"&&<div className="g2">
         <div className="card">
           <div className="ct">Satıcı Bazlı Ciro — {yilA} vs {yilB}</div>
@@ -3492,6 +3599,20 @@ function SatinAlmaGecmisi(props) {
   var _dateFrom=useState(""); var dateFrom=_dateFrom[0]; var setDateFrom=_dateFrom[1];
   var _dateTo=useState(""); var dateTo=_dateTo[0]; var setDateTo=_dateTo[1];
   var _selSku=useState(null); var selSku=_selSku[0]; var setSelSku=_selSku[1];
+  var _cfg=useState({modes:{},manual:{},rawManual:[]}); var cfg=_cfg[0]; var setCfg=_cfg[1];
+  var _showCari=useState(false); var showCari=_showCari[0]; var setShowCari=_showCari[1];
+  var _mEdit=useState({}); var mEdit=_mEdit[0]; var setMEdit=_mEdit[1];
+  var isAdm = props.role==="admin";
+  function reloadCfg(){ loadCostConfig().then(setCfg); }
+  useEffect(function(){ reloadCfg(); }, []);
+  function saveMode(supplier, mode){
+    fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"saveTedarikciAyar",supplier:supplier,mode:mode,user:props.userName||""})})
+      .then(function(r){return r.json();}).then(function(){reloadCfg();}).catch(function(e){alert("Hata: "+e.message);});
+  }
+  function saveManual(modelNo, val){
+    fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"saveManuelMaliyet",modelNo:modelNo,unitCost:val,user:props.userName||""})})
+      .then(function(r){return r.json();}).then(function(){ setMEdit(function(m){var n=Object.assign({},m);delete n[modelNo];return n;}); reloadCfg(); }).catch(function(e){alert("Hata: "+e.message);});
+  }
 
   useEffect(function(){ loadData(); }, []);
 
@@ -3518,7 +3639,7 @@ function SatinAlmaGecmisi(props) {
   });
 
   /* Paraşüt satın alma faturalarını systemModelNo bazında zenginleştir */
-  var enriched = satinAlma.map(function(row){
+  var enriched = satinAlma.filter(function(r){return costRowOK(r,cfg.modes);}).map(function(row){
     var pName = String(row.productName||"");
     /* Önce tam eşleşme, sonra normalize eşleşme dene */
     var esl = nameToSku[pName] || nameToSku[pName.trim().toUpperCase()] || {};
@@ -3612,6 +3733,26 @@ function SatinAlmaGecmisi(props) {
           <div style={{padding:"10px 16px",borderBottom:".5px solid var(--bd)",fontWeight:500,fontSize:13}}>
             System Model No Bazlı Satın Alma Özeti ({skuSortable.sorted.length})
           </div>
+          {isAdm&&<div style={{padding:"8px 16px",borderBottom:".5px solid var(--bd)"}}>
+            <button className="btn bsm" onClick={function(){setShowCari(!showCari);}}><i className="ti ti-settings" aria-hidden="true"/>Cari Ayarları (maliyete dahil etme){showCari?" ▲":" ▼"}</button>
+            {showCari&&(function(){
+              var sup={};
+              satinAlma.forEach(function(r){ var n=String(r.contactName||"").trim(); if(!n) return; var k=normName(n); if(!sup[k]) sup[k]={name:n,n:0,ref:0}; sup[k].n++; if(isRefund(r)) sup[k].ref++; });
+              var list=Object.values(sup).sort(function(a,b){return b.n-a.n;});
+              return <div className="tw" style={{marginTop:8,maxHeight:300,overflow:"auto"}}>
+                <div className="infobox ibI mb2" style={{fontSize:11}}>Varsayılan: sadece satınalma faturaları maliyete girer, iade faturaları girmez. Cari bazında değiştirebilirsiniz.</div>
+                <table><thead><tr><th>Cari</th><th>Fatura satırı</th><th>İade</th><th>Maliyet hesabı</th></tr></thead>
+                <tbody>{list.map(function(s){
+                  var m=cfg.modes[normName(s.name)]||"purchase_only";
+                  return <tr key={s.name}><td>{s.name}</td><td>{s.n}</td><td>{s.ref}</td>
+                    <td><select value={m} onChange={function(e){saveMode(s.name,e.target.value);}} style={{width:"auto"}}>
+                      <option value="purchase_only">Sadece satınalma faturaları</option>
+                      <option value="all">Tüm faturalar (iade dahil)</option>
+                      <option value="exclude">Maliyete dahil etme</option>
+                    </select></td></tr>;})}</tbody></table>
+              </div>;
+            })()}
+          </div>}
           <div className="tw"><table>
             <thead><tr>
               <SortThSku k="sku">System Model No</SortThSku>
@@ -3621,9 +3762,10 @@ function SatinAlmaGecmisi(props) {
               <SortThSku k="avgUnit">Ort. Birim</SortThSku>
               <SortThSku k="invoiceCount">Fatura</SortThSku>
               <SortThSku k="lastDate">Son Tarih</SortThSku>
+              <th>Manuel Maliyet (TL)</th>
             </tr></thead>
             <tbody>
-              {skuSortable.sorted.length===0&&<tr><td colSpan={7}><div className="empty" style={{padding:20}}><p>Kayıt bulunamadı</p></div></td></tr>}
+              {skuSortable.sorted.length===0&&<tr><td colSpan={8}><div className="empty" style={{padding:20}}><p>Kayıt bulunamadı</p></div></td></tr>}
               {skuSortable.sorted.map(function(r){return(
                 <tr key={r.sku} style={{cursor:"pointer",background:selSku===r.sku?"var(--bgI)":"inherit"}}
                   onClick={function(){setSelSku(r.sku===selSku?null:r.sku);}}>
@@ -3637,6 +3779,16 @@ function SatinAlmaGecmisi(props) {
                   <td>{fmtTL(r.avgUnit)}</td>
                   <td>{r.invoiceCount}</td>
                   <td style={{fontSize:12}}>{r.lastDate||"—"}</td>
+                  <td onClick={function(e){e.stopPropagation();}} style={{minWidth:130}}>
+                    {isAdm?<input type="number" step="0.01" style={{width:90,padding:"4px 6px"}}
+                      placeholder="—"
+                      value={mEdit[r.sku]!==undefined?mEdit[r.sku]:(cfg.manual[normName(r.sku)]||"")}
+                      onChange={function(e){var v=e.target.value;setMEdit(function(m){var n=Object.assign({},m);n[r.sku]=v;return n;});}}
+                      onBlur={function(e){ if(mEdit[r.sku]!==undefined) saveManual(r.sku,e.target.value); }}
+                      onKeyDown={function(e){if(e.key==="Enter") e.target.blur();}}/>
+                      :(cfg.manual[normName(r.sku)]?fmtTL(cfg.manual[normName(r.sku)]):"—")}
+                    {cfg.manual[normName(r.sku)]>0&&<span className="badge bw" style={{marginLeft:4,fontSize:9}}>manuel</span>}
+                  </td>
                 </tr>
               );})}
             </tbody>
@@ -4400,7 +4552,7 @@ function App() {
             {curPage==="stock"&&<StockList products={products} setProducts={setProducts} lots={lots} sales={sales} role={user.role} onAddProduct={function(){setShowAP(true);}} onAddLot={function(){setShowAL(true);}} onUpdateProduct={updateProduct} eslestirme={eslestirme} parasutSatislar={parasutSatislar} parasutUrunler={parasutUrunler} userName={user.name}/>}
             {curPage==="customers"&&<Customers users={allUsers} customers={onlySeller?customers.filter(function(c){return String(c.sellerId)===onlySeller;}):customers} setCustomers={setCustomers} products={products} lots={lots} sales={sales} checks={checks} setChecks={setChecks} role={user.role} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onAddCheck={addCheck} onUpdateCheck={updateCheck}/>}
             {curPage==="raporlar"&&<SatisRaporlari onlySeller={onlySeller}/>}
-            {curPage==="satin_alma"&&<SatinAlmaGecmisi/>}
+            {curPage==="satin_alma"&&<SatinAlmaGecmisi role={user.role} userName={user.name}/>}
             {curPage==="sellers"&&<SellerPerformance onlySeller={onlySeller} users={allUsers} sales={sales} customers={customers}/>}
             {curPage==="sku"&&<SkuMap products={products} skuMap={skuMap} setSkuMap={setSkuMap} role={user.role} onAdd={addSkuMapping} onDelete={deleteSkuMapping}/>}
             {curPage==="eslestirme"&&<EslestirmeEkrani/>}
